@@ -132,5 +132,14 @@ pnpm typecheck
 pnpm build
 ```
 
+La CI (`.github/workflows/ci.yml`) exécute les vérifications Rust et Node.js sur
+Linux et macOS à chaque push et pull request ; `.github/workflows/website.yml`
+construit le site. Depuis un Mac, quand un changement touche au disque, aux
+verrous ou au `mmap`, lancer aussi les tests sous Linux avec Docker :
+
+```bash
+docker run --rm -v "$PWD":/src:ro -v mojay-linux-target:/target -e CARGO_TARGET_DIR=/target -w /src rust:1-bookworm cargo test --workspace
+```
+
 Les vérifications doivent passer sans avertissement. Les dépendances restent minimales :
 chaque nouvelle crate se justifie (maintenance, licence, taille).

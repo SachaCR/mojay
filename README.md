@@ -1,5 +1,7 @@
 # Mojay
 
+[![CI](https://github.com/SachaCR/mojay/actions/workflows/ci.yml/badge.svg)](https://github.com/SachaCR/mojay/actions/workflows/ci.yml)
+
 **SQLite for Kafka.** Mojay is an embedded Rust library that gives you topics,
 partitions, offsets and consumer groups in a local folder, with no server.
 Any number of processes on the machine can produce and consume at the same
