@@ -106,6 +106,11 @@ impl Consumer {
 
     /// Waits at most `timeoutMs` for messages, and returns them as soon as there are any.
     /// The Promise resolves to an empty list if nothing arrived in time.
+    ///
+    /// `poll` is also when this member rebalances with the rest of the group
+    /// (at most every 200 ms): a consumer that stops calling `poll` keeps its
+    /// partitions, and a new member gets none of them, until it polls again
+    /// or is closed. Keep polling, or `close()` a consumer you no longer read.
     #[napi(ts_return_type = "Promise<ConsumerRecord[]>")]
     pub fn poll<'env>(&self, env: &'env Env, timeout_ms: u32) -> napi::Result<Object<'env>> {
         let timeout = Duration::from_millis(u64::from(timeout_ms));

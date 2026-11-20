@@ -112,10 +112,13 @@ impl Producer {
         })
     }
 
+    /// The name of the topic this producer writes to.
     pub fn topic(&self) -> &str {
         &self.topic
     }
 
+    /// The number of partitions of the topic, fixed at its creation: valid
+    /// partitions for [`send_to`](Self::send_to) are `0..partitions()`.
     pub fn partitions(&self) -> u32 {
         self.partitions.len() as u32
     }

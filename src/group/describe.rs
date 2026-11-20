@@ -10,8 +10,11 @@ use crate::error::Result;
 /// The offset committed by a group for a partition of a topic.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommittedOffset {
+    /// The group that committed.
     pub group: String,
+    /// The partition of the topic.
     pub partition: u32,
+    /// The committed offset: the next one the group will read.
     pub offset: u64,
 }
 

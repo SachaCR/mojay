@@ -11,8 +11,9 @@ use crate::record::Record;
 use crate::segment::SegmentReader;
 
 /// Maximum delay before noticing that a segment has been deleted by
-/// retention. Until then, it stays readable (the open file survives its
-/// deletion) but still takes up disk space.
+/// retention, as long as the reader is used (see
+/// `TopicReader::release_deleted_segments`). Until then, it stays readable
+/// (the open file survives its deletion) but still takes up disk space.
 const DISK_CHECK_INTERVAL: Duration = Duration::from_millis(500);
 
 #[derive(Debug)]
@@ -48,9 +49,7 @@ impl PartitionReader {
         max_bytes: usize,
         read_limit: u64,
     ) -> Result<Vec<Record>> {
-        if self.last_disk_check.elapsed() >= DISK_CHECK_INTERVAL {
-            self.sync_with_disk()?;
-        }
+        self.sync_with_disk_if_due()?;
         let start = self.start_offset();
         if offset < start || offset > read_limit {
             return Err(Error::OffsetOutOfRange {
@@ -88,6 +87,24 @@ impl PartitionReader {
             }
         }
         Ok(out)
+    }
+
+    /// Brings the segment list in line with the disk if the last check is
+    /// older than [`DISK_CHECK_INTERVAL`]. Cheap otherwise: a clock reading.
+    pub(crate) fn sync_with_disk_if_due(&mut self) -> Result<()> {
+        if self.last_disk_check.elapsed() >= DISK_CHECK_INTERVAL {
+            self.sync_with_disk()?;
+        }
+        Ok(())
+    }
+
+    /// Base offsets of the segments this reader has open.
+    #[cfg(test)]
+    pub(crate) fn open_segment_bases(&self) -> Vec<u64> {
+        self.segments
+            .iter()
+            .map(SegmentReader::base_offset)
+            .collect()
     }
 
     /// Brings the segment list in line with the disk: forgets those that

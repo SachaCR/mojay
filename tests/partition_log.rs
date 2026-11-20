@@ -306,6 +306,44 @@ fn wrong_index_entries_are_ignored() {
     }
 }
 
+/// An index entry `(relative offset, position)`, as stored in a `.idx` file.
+fn index_entry(relative_offset: u32, position: u64) -> Vec<u8> {
+    let mut bytes = relative_offset.to_le_bytes().to_vec();
+    bytes.extend_from_slice(&u32::try_from(position).unwrap().to_le_bytes());
+    bytes
+}
+
+/// An index entry that names a record but points anywhere else, at each
+/// position of the segment: reads step back to the start of the segment
+/// and still return every record, none skipped.
+#[test]
+fn wrong_index_entry_at_each_position_is_skipped() {
+    const COUNT: u64 = 12;
+    const NAMED: u64 = 6;
+    let dir = TempDir::new().unwrap();
+    let boundaries = build_log(dir.path(), LogConfig::default(), COUNT);
+    // The real entry of the last record, after the wrong one: opening the log
+    // checks only the last entries, so the wrong one stays in the index.
+    let last_entry = index_entry((COUNT - 1) as u32, boundaries[COUNT as usize - 1]);
+
+    for position in boundaries[0]..boundaries[COUNT as usize - 1] {
+        let mut index = index_entry(NAMED as u32, position);
+        index.extend_from_slice(&last_entry);
+        fs::write(dir.path().join(FIRST_INDEX), &index).unwrap();
+
+        let log = PartitionLog::open(dir.path(), LogConfig::default()).unwrap();
+        for from in NAMED..COUNT {
+            let records = log
+                .read(from, ALL)
+                .unwrap_or_else(|e| panic!("entry at {position}, read from {from}: {e}"));
+            assert_eq!(records.len() as u64, COUNT - from, "entry at {position}");
+            for (rec, i) in records.iter().zip(from..) {
+                assert_is_message(rec, i);
+            }
+        }
+    }
+}
+
 #[test]
 fn corruption_in_sealed_segment_is_reported_not_repaired() {
     let dir = TempDir::new().unwrap();

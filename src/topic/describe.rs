@@ -12,14 +12,18 @@ use crate::log::{list_segment_bases, segment_log_path};
 /// A topic as it is on disk.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TopicDescription {
+    /// The topic name.
     pub name: String,
+    /// Its configuration, from `meta.toml`.
     pub config: TopicConfig,
+    /// Each partition, in order.
     pub partitions: Vec<PartitionDescription>,
 }
 
 /// A partition: its readable offsets and its segments.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PartitionDescription {
+    /// The partition number.
     pub partition: u32,
     /// First available offset.
     pub start_offset: u64,
@@ -39,8 +43,11 @@ impl PartitionDescription {
 /// A segment file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SegmentDescription {
+    /// Offset of the first record of the segment.
     pub base_offset: u64,
+    /// The `.log` file.
     pub path: PathBuf,
+    /// Its size on disk, header included.
     pub size_bytes: u64,
 }
 

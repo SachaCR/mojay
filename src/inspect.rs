@@ -17,7 +17,9 @@ use crate::segment::{HEADER_SIZE, parse_header};
 /// The contents of a `.log` segment file and its index.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SegmentDump {
+    /// The `.log` file read.
     pub path: PathBuf,
+    /// Its size on disk, header included.
     pub size_bytes: u64,
     /// The base offset, read from the file name if it has the expected format.
     pub base_offset: Option<u64>,
@@ -34,38 +36,56 @@ pub struct SegmentDump {
 /// A record and its location in the file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DumpedRecord {
+    /// Byte position of the record in the file.
     pub position: u64,
     /// Encoded size, including the length prefix.
     pub size: usize,
+    /// The decoded record.
     pub record: Record,
 }
 
 /// Bytes that cannot be read as a record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnreadableTail {
+    /// Byte position where reading stopped.
     pub position: u64,
+    /// Number of bytes from there to the end of the file.
     pub bytes: u64,
+    /// Why they cannot be read as a record.
     pub reason: String,
 }
 
 /// The raw contents of an index file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndexDump {
+    /// Every entry of the file, in order, valid or not.
     pub entries: Vec<DumpedIndexEntry>,
     /// Extra bytes at the end (truncated entry).
     pub leftover_bytes: usize,
 }
 
+/// An entry of an index file, as stored.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DumpedIndexEntry {
+    /// Offset of the record, minus the base offset of the segment.
     pub relative_offset: u32,
+    /// Byte position of the record in the `.log`.
     pub position: u32,
     /// `false` if the entry is inconsistent (outside the log, or not increasing):
-    /// normal reading ignores it, along with all the following ones.
+    /// normal reading ignores it, along with all the following ones. An entry
+    /// marked valid may still point at the wrong record: reading checks that
+    /// too, and skips it.
     pub valid: bool,
 }
 
 /// Reads a `.log` file and its index, without modifying anything.
+///
+/// An unreadable end is reported in [`SegmentDump::unreadable_tail`], not
+/// as an error.
+///
+/// # Errors
+///
+/// [`Error::Io`](crate::Error::Io) if the `.log` cannot be read.
 pub fn dump_segment(path: impl AsRef<Path>) -> Result<SegmentDump> {
     let path = path.as_ref();
     let bytes = fs::read(path)?;

@@ -6,7 +6,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use super::{
-    HEADER_SIZE, ReadRequest, SegmentRead, check_header, index_path, log_path, read_records,
+    HEADER_SIZE, ReadRequest, SegmentRead, check_header, index_path, log_path, read_indexed,
 };
 use crate::error::Result;
 use crate::index::SparseIndex;
@@ -55,15 +55,25 @@ impl SegmentReader {
             self.header_checked = true;
         }
         self.refresh_index(size)?;
-        let start = self
-            .index
-            .floor(self.base_offset, req.from)
-            .map_or(HEADER_SIZE, |e| e.position());
-        read_records(&self.log, &self.log_path, start, size, req, out)
+        let (read, trusted) = read_indexed(
+            &self.log,
+            &self.log_path,
+            self.base_offset,
+            &self.index,
+            size,
+            req,
+            out,
+        )?;
+        // Forget the wrong entries until the index file changes: the next
+        // reads go straight to an entry that holds its record.
+        self.index.truncate(trusted);
+        Ok(read)
     }
 
     /// Re-reads the index if its file has changed size. A missing or
-    /// damaged index only slows reading down: it then starts from the beginning.
+    /// damaged index only slows reading down: entries that are out of bounds
+    /// are dropped here, and those that do not point at their record are
+    /// skipped when reading (see `read_indexed`).
     fn refresh_index(&mut self, log_size: u64) -> Result<()> {
         let len = match fs::metadata(&self.index_path) {
             Ok(meta) => meta.len(),
