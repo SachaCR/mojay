@@ -5,9 +5,10 @@ groups dans un dossier local, sans serveur : « SQLite pour Kafka ». Elle stock
 les données des autres. **La fiabilité passe avant tout, la lisibilité juste après,
 la performance ensuite.**
 
-La note de conception fait référence :
-https://claude.ai/artifact/674k8FuSABpT9t2fr7fA1w. Un changement de format disque
-ou de comportement visible commence par sa mise à jour.
+La note de conception fait référence : [docs/conception.md](docs/conception.md),
+versionnée avec le code. Un changement de format disque ou de comportement visible
+commence par sa mise à jour, dans le même commit que le code. La note en ligne
+(https://claude.ai/artifact/674k8FuSABpT9t2fr7fA1w) sert aux discussions.
 
 ## 1. Architecture : une responsabilité par module
 
