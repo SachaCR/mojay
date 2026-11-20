@@ -1,5 +1,5 @@
-//! Démo Mojay : un membre du groupe `demo-loggers` qui affiche les messages
-//! qu'il reçoit. Lancez-en 1 à 3 pour voir les partitions se répartir.
+//! Mojay demo: a member of the `demo-loggers` group that prints the messages
+//! it receives. Start 1 to 3 of them to see the partitions being shared out.
 
 mod format;
 
@@ -18,17 +18,17 @@ const POLL_TIMEOUT: Duration = Duration::from_millis(500);
 const TOPIC_WAIT: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Parser)]
-#[command(about = "Affiche les messages d'un topic Mojay, en tant que membre d'un groupe")]
+#[command(about = "Prints the messages of a Mojay topic, as a member of a group")]
 struct Args {
-    /// Le dossier de données, partagé avec le producteur.
+    /// The data directory, shared with the producer.
     #[arg(long, short, default_value = "./demo-data")]
     data: PathBuf,
     #[arg(long, short, default_value = "demo-events")]
     topic: String,
-    /// Le groupe : les membres d'un même groupe se partagent les partitions.
+    /// The group: members of the same group share the partitions.
     #[arg(long, short, default_value = "demo-loggers")]
     group: String,
-    /// Sans offset commité, lire seulement les nouveaux messages.
+    /// With no committed offset, read only new messages.
     #[arg(long)]
     latest: bool,
 }
@@ -37,7 +37,7 @@ fn main() -> ExitCode {
     match run(Args::parse()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("erreur : {error}");
+            eprintln!("error: {error}");
             ExitCode::FAILURE
         }
     }
@@ -48,15 +48,15 @@ fn run(args: Args) -> Result<(), Box<dyn StdError>> {
     let stop = Arc::clone(&running);
     ctrlc::set_handler(move || stop.store(false, Ordering::SeqCst))?;
 
-    let me = format!("lecteur {}", std::process::id());
+    let me = format!("reader {}", std::process::id());
     let config = ConsumerConfig {
         start_from: if args.latest {
             StartFrom::Latest
         } else {
             StartFrom::Earliest
         },
-        // Commit automatique : un membre qui part ou cède une partition la
-        // rend exactement là où il s'est arrêté.
+        // Automatic commit: a member that leaves or gives up a partition hands
+        // it back exactly where it stopped.
         auto_commit: Some(Duration::from_secs(1)),
         ..ConsumerConfig::default()
     };
@@ -64,7 +64,7 @@ fn run(args: Args) -> Result<(), Box<dyn StdError>> {
         return Ok(());
     };
     println!(
-        "[{me}] membre du groupe « {} » sur « {} ». Ctrl-C pour partir.",
+        "[{me}] member of group \"{}\" on \"{}\". Ctrl-C to leave.",
         args.group, args.topic
     );
 
@@ -79,15 +79,15 @@ fn run(args: Args) -> Result<(), Box<dyn StdError>> {
         }
     }
 
-    // Commite, rend les partitions et quitte le groupe : les autres membres
-    // les reprennent au prochain tour, sans doublon.
+    // Commits, releases the partitions and leaves the group: the other members
+    // take them over on the next round, with no duplicates.
     drop(consumer);
-    println!("\n[{me}] parti : mes partitions sont rendues au groupe.");
+    println!("\n[{me}] left: my partitions are back with the group.");
     Ok(())
 }
 
-/// Rejoint le groupe, en attendant que le producteur ait créé le topic.
-/// Renvoie `None` si l'utilisateur arrête avant.
+/// Joins the group, waiting for the producer to create the topic.
+/// Returns `None` if the user stops before then.
 fn join_group(
     args: &Args,
     config: ConsumerConfig,
@@ -100,10 +100,7 @@ fn join_group(
             Ok(consumer) => return Ok(Some(consumer)),
             Err(Error::UnknownTopic(_)) => {
                 if !announced {
-                    println!(
-                        "En attente du topic « {} » : lancez le producteur.",
-                        args.topic
-                    );
+                    println!("Waiting for topic \"{}\": start the producer.", args.topic);
                     announced = true;
                 }
                 thread::sleep(TOPIC_WAIT);
@@ -118,10 +115,10 @@ fn report_rebalance(me: &str, consumer: &mut Consumer) {
     for event in consumer.take_rebalance_events() {
         match event {
             RebalanceEvent::Assigned { partition, .. } => {
-                println!("[{me}] + partition {partition} reçue");
+                println!("[{me}] + received partition {partition}");
             }
             RebalanceEvent::Revoked { partition, .. } => {
-                println!("[{me}] - partition {partition} cédée à un autre membre");
+                println!("[{me}] - gave partition {partition} to another member");
             }
         }
     }

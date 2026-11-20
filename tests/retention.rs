@@ -1,5 +1,5 @@
-//! Tests de la rétention : suppression des plus vieux segments par taille et
-//! par âge, et comportement des lecteurs et consumers en retard.
+//! Retention tests: deletion of the oldest segments by size and by age,
+//! and behavior of lagging readers and consumers.
 
 #[allow(dead_code)]
 mod common;
@@ -15,7 +15,7 @@ use tempfile::TempDir;
 
 const ALL: usize = usize::MAX;
 const HOUR: Duration = Duration::from_secs(3600);
-/// Au-delà du délai (500 ms) après lequel un lecteur remarque une suppression.
+/// Longer than the delay (500 ms) after which a reader notices a deletion.
 const READER_NOTICES: Duration = Duration::from_millis(700);
 
 fn config(retention: Retention) -> LogConfig {
@@ -55,7 +55,7 @@ fn total_size(files: &[PathBuf]) -> u64 {
     files.iter().map(|f| fs::metadata(f).unwrap().len()).sum()
 }
 
-/// Vieillit artificiellement un fichier, comme s'il n'avait pas été écrit depuis `age`.
+/// Artificially age a file, as if it had not been written for `age`.
 fn make_older(path: &Path, age: Duration) {
     let file = File::options().write(true).open(path).unwrap();
     file.set_modified(SystemTime::now() - age).unwrap();
@@ -69,7 +69,7 @@ fn fill(log: &mut PartitionLog, count: u64) {
 }
 
 // ---------------------------------------------------------------------------
-// Log d'une partition
+// Partition log
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -90,22 +90,22 @@ fn size_limit_deletes_the_oldest_segments() {
     let mut log = PartitionLog::open(dir.path(), config(by_size(2000))).unwrap();
     for i in 0..200 {
         log.append(&message(i)).unwrap();
-        // La limite tient après chaque ajout, pas seulement à chaque segment.
+        // The limit holds after every append, not just at each segment.
         let logs = files_with_extension(dir.path(), "log");
         assert!(
             logs.len() == 1 || total_size(&logs) <= 2000,
-            "après l'offset {i}"
+            "after offset {i}"
         );
     }
 
     let logs = files_with_extension(dir.path(), "log");
     assert!(
         log.start_offset() > 0,
-        "des segments doivent avoir été supprimés"
+        "some segments must have been deleted"
     );
     assert_eq!(log.next_offset(), 200);
 
-    // Chaque index a disparu avec son segment.
+    // Each index is gone along with its segment.
     assert_eq!(files_with_extension(dir.path(), "idx").len(), logs.len());
     let start = log.start_offset();
     assert_eq!(log.read(start, ALL).unwrap()[0].offset, start);
@@ -114,7 +114,7 @@ fn size_limit_deletes_the_oldest_segments() {
         Err(Error::OffsetOutOfRange { .. })
     ));
 
-    // Rouvert, le log commence au même endroit et accepte de nouvelles écritures.
+    // Once reopened, the log starts at the same place and accepts new writes.
     drop(log);
     let mut log = PartitionLog::open(dir.path(), config(by_size(2000))).unwrap();
     assert_eq!(log.start_offset(), start);
@@ -138,13 +138,9 @@ fn age_limit_deletes_segments_not_written_for_too_long() {
     fill(&mut log, 100);
     let logs = files_with_extension(dir.path(), "log");
     assert!(logs.len() > 3);
-    assert_eq!(
-        log.enforce_retention().unwrap(),
-        0,
-        "rien n'est encore vieux"
-    );
+    assert_eq!(log.enforce_retention().unwrap(), 0, "nothing is old yet");
 
-    // Les deux plus anciens n'ont pas été écrits depuis deux heures.
+    // The two oldest have not been written for two hours.
     make_older(&logs[0], HOUR * 2);
     make_older(&logs[1], HOUR * 2);
     assert_eq!(log.enforce_retention().unwrap(), 2);
@@ -177,7 +173,7 @@ fn orphan_index_left_by_an_interrupted_deletion_is_removed() {
 }
 
 // ---------------------------------------------------------------------------
-// Topics, lecteurs et consumers
+// Topics, readers and consumers
 // ---------------------------------------------------------------------------
 
 fn topic_config(retention: Retention) -> TopicConfig {
@@ -195,7 +191,7 @@ fn retention_is_kept_in_the_topic_metadata() {
     let meta = fs::read_to_string(dir.path().join("topics/stream/meta.toml")).unwrap();
     assert!(meta.contains("retention_bytes = 2000"), "{meta}");
 
-    // Un producteur rouvert applique la rétention lue dans meta.toml.
+    // A reopened producer applies the retention read from meta.toml.
     let mut producer = db.producer("stream").unwrap();
     for i in 0..200 {
         producer.send_to(0, &message(i)).unwrap();
@@ -237,15 +233,15 @@ fn reader_notices_deleted_segments_and_reports_the_new_start() {
     thread::sleep(READER_NOTICES);
     let err = reader.read(0, 0, ALL).unwrap_err();
     let Error::OffsetOutOfRange { start, .. } = err else {
-        panic!("OffsetOutOfRange attendu, obtenu {err:?}");
+        panic!("expected OffsetOutOfRange, got {err:?}");
     };
     assert!(start > 0);
     assert_eq!(reader.start_offset(0).unwrap(), start);
     assert_eq!(reader.read(0, start, ALL).unwrap()[0].offset, start);
 }
 
-/// Un consumer dont la position a été supprimée repart du nouveau début
-/// (politique `Earliest`), sans erreur et sans trou ensuite.
+/// A consumer whose position was deleted restarts from the new beginning
+/// (`Earliest` policy), with no error and no gaps afterwards.
 #[test]
 fn consumer_left_behind_restarts_at_the_new_start() {
     let (_dir, db) = new_db();
@@ -268,7 +264,7 @@ fn consumer_left_behind_restarts_at_the_new_start() {
     while next != Some(300) {
         for record in consumer.poll(Duration::from_millis(100)).unwrap() {
             let expected = next.unwrap_or(start);
-            assert_eq!(record.offset, expected, "lu dans l'ordre, sans trou");
+            assert_eq!(record.offset, expected, "read in order, without gaps");
             next = Some(record.offset + 1);
         }
     }

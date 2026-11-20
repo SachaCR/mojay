@@ -1,8 +1,8 @@
-//! Index clairsemé d'un segment : des paires `(offset relatif u32, position u32)`
-//! en little-endian, une tous les `interval` octets écrits.
+//! Sparse index of a segment: `(relative offset u32, position u32)` pairs
+//! in little-endian, one every `interval` bytes written.
 //!
-//! L'index est un cache : il peut toujours être reconstruit depuis le `.log`.
-//! Ce module est de la logique pure, sans I/O.
+//! The index is a cache: it can always be rebuilt from the `.log`.
+//! This module is pure logic, with no I/O.
 
 pub(crate) const ENTRY_SIZE: usize = 8;
 
@@ -22,23 +22,23 @@ impl IndexEntry {
     }
 }
 
-/// Les entrées d'un index, triées par offset et par position.
+/// The entries of an index, sorted by offset and by position.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct SparseIndex {
     entries: Vec<IndexEntry>,
 }
 
-/// Résultat du décodage d'un fichier d'index.
+/// Result of decoding an index file.
 pub(crate) struct ParsedIndex {
     pub(crate) index: SparseIndex,
-    /// `false` si des octets ont dû être écartés (fin tronquée, entrée incohérente).
+    /// `false` if bytes had to be discarded (truncated end, inconsistent entry).
     pub(crate) clean: bool,
 }
 
 impl SparseIndex {
-    /// Décode un fichier d'index en ne gardant que le plus long préfixe
-    /// cohérent : positions dans `[min_position, log_size)`, offsets et
-    /// positions strictement croissants.
+    /// Decodes an index file, keeping only the longest consistent
+    /// prefix: positions in `[min_position, log_size)`, offsets and
+    /// positions strictly increasing.
     pub(crate) fn parse(raw: &[u8], min_position: u64, log_size: u64) -> ParsedIndex {
         let (chunks, leftover) = raw.as_chunks::<ENTRY_SIZE>();
         let mut entries: Vec<IndexEntry> = Vec::with_capacity(chunks.len());
@@ -93,7 +93,7 @@ impl SparseIndex {
         self.entries.extend(entries);
     }
 
-    /// La dernière entrée dont l'offset est inférieur ou égal à `offset`.
+    /// The last entry whose offset is less than or equal to `offset`.
     pub(crate) fn floor(&self, base_offset: u64, offset: u64) -> Option<IndexEntry> {
         let relative = offset.saturating_sub(base_offset);
         let idx = self
@@ -103,8 +103,8 @@ impl SparseIndex {
     }
 }
 
-/// Règle d'indexation : une entrée dès que `interval` octets ont été écrits
-/// depuis la précédente.
+/// Indexing rule: one entry as soon as `interval` bytes have been written
+/// since the previous one.
 #[derive(Debug)]
 pub(crate) struct IndexPolicy {
     base_offset: u64,
@@ -125,8 +125,8 @@ impl IndexPolicy {
         self.bytes_since_entry = 0;
     }
 
-    /// Prend en compte un enregistrement de `size` octets écrit à `position`,
-    /// et renvoie l'entrée d'index qui doit pointer sur lui, s'il en faut une.
+    /// Accounts for a record of `size` bytes written at `position`,
+    /// and returns the index entry that must point to it, if one is needed.
     pub(crate) fn observe(
         &mut self,
         offset: u64,
@@ -204,7 +204,7 @@ mod tests {
                 e
             })
             .collect();
-        // 20 octets par enregistrement : une entrée tous les 3 enregistrements.
+        // 20 bytes per record: one entry every 3 records.
         assert_eq!(entries, vec![entry(3, 76), entry(6, 136), entry(9, 196)]);
     }
 }

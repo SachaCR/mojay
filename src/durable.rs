@@ -1,5 +1,5 @@
-//! Écritures durables sur le système de fichiers : ce qui doit survivre à une
-//! coupure de courant passe par ici.
+//! Durable writes to the file system: anything that must survive a
+//! power loss goes through here.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
@@ -7,10 +7,10 @@ use std::path::Path;
 
 use crate::error::Result;
 
-/// Remplace `path` par `contents` de façon atomique : un lecteur voit soit
-/// l'ancien contenu, soit le nouveau, jamais un mélange, même après un crash.
+/// Atomically replaces `path` with `contents`: a reader sees either
+/// the old content or the new one, never a mix, even after a crash.
 ///
-/// Fichier temporaire, `fsync`, `rename`, puis `fsync` du dossier.
+/// Temporary file, `fsync`, `rename`, then `fsync` of the directory.
 pub(crate) fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
     let dir = path.parent().unwrap_or(Path::new("."));
     let file_name = path.file_name().unwrap_or_default().to_string_lossy();
@@ -29,7 +29,7 @@ pub(crate) fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
     sync_dir(dir)
 }
 
-/// Rend durable la création, la suppression ou le renommage d'une entrée de `dir`.
+/// Makes the creation, deletion or renaming of an entry in `dir` durable.
 pub(crate) fn sync_dir(dir: &Path) -> Result<()> {
     File::open(dir)?.sync_all()?;
     Ok(())

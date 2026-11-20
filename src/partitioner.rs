@@ -1,7 +1,7 @@
-//! Choix de la partition d'un message : par sa clé (murmur2, comme Kafka),
-//! sinon en round-robin. Logique pure, sans I/O.
+//! Choosing a message's partition: by its key (murmur2, like Kafka),
+//! otherwise round-robin. Pure logic, with no I/O.
 
-/// Choisit la partition des messages d'un producteur.
+/// Chooses the partition for a producer's messages.
 #[derive(Debug)]
 pub(crate) struct Partitioner {
     partitions: u32,
@@ -16,8 +16,8 @@ impl Partitioner {
         }
     }
 
-    /// Partition d'un message : déterminée par sa clé s'il en a une, ce qui
-    /// garde l'ordre des messages de même clé ; sinon la suivante en round-robin.
+    /// Partition of a message: determined by its key if it has one, which
+    /// preserves the order of messages with the same key; otherwise the next one round-robin.
     pub(crate) fn partition_for(&mut self, key: Option<&[u8]>) -> u32 {
         match key {
             Some(key) => partition_for_key(key, self.partitions),
@@ -30,14 +30,14 @@ impl Partitioner {
     }
 }
 
-/// La partition qu'un producteur Kafka choisirait pour `key` : une clé tombe
-/// dans la même partition avec Mojay et avec Kafka.
+/// The partition a Kafka producer would choose for `key`: a key lands
+/// in the same partition with Mojay and with Kafka.
 pub(crate) fn partition_for_key(key: &[u8], partitions: u32) -> u32 {
-    // `toPositive` de Kafka : on retire le bit de signe.
+    // Kafka's `toPositive`: clear the sign bit.
     (murmur2(key) as u32 & 0x7fff_ffff) % partitions
 }
 
-/// Murmur2 32 bits, à l'identique de `org.apache.kafka.common.utils.Utils.murmur2`.
+/// 32-bit Murmur2, identical to `org.apache.kafka.common.utils.Utils.murmur2`.
 pub(crate) fn murmur2(data: &[u8]) -> i32 {
     const SEED: u32 = 0x9747_b28c;
     const M: u32 = 0x5bd1_e995;
@@ -69,7 +69,7 @@ pub(crate) fn murmur2(data: &[u8]) -> i32 {
 mod tests {
     use super::*;
 
-    /// Les valeurs de référence du test `UtilsTest.testMurmur2` de Kafka.
+    /// The reference values from Kafka's `UtilsTest.testMurmur2` test.
     #[test]
     fn murmur2_matches_kafka() {
         let cases: [(&[u8], i32); 6] = [
@@ -87,7 +87,7 @@ mod tests {
             assert_eq!(
                 murmur2(key),
                 expected,
-                "clé {:?}",
+                "key {:?}",
                 String::from_utf8_lossy(key)
             );
         }

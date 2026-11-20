@@ -1,8 +1,8 @@
-//! Offsets commités d'un groupe : un fichier par partition, `offsets/<topic>-<p>`.
+//! A group's committed offsets: one file per partition, `offsets/<topic>-<p>`.
 //!
-//! Le fichier fait 12 octets : l'offset (`u64`) puis son CRC32C (`u32`), en
-//! little-endian. Il n'est écrit que par le détenteur du verrou de la
-//! partition, et toujours remplacé de façon atomique.
+//! The file is 12 bytes: the offset (`u64`) then its CRC32C (`u32`), in
+//! little-endian. It is only written by the holder of the partition's
+//! lock, and always replaced atomically.
 
 use std::fs;
 use std::io;
@@ -13,18 +13,18 @@ use crate::error::{Result, corrupt};
 
 const FILE_SIZE: usize = 12;
 
-/// L'offset commité, ou `None` si le groupe n'a jamais rien commité ici.
+/// The committed offset, or `None` if the group has never committed anything here.
 pub(super) fn read(path: &Path) -> Result<Option<u64>> {
     match fs::read(path) {
         Ok(bytes) => decode(&bytes)
             .map(Some)
-            .ok_or_else(|| corrupt(path, "fichier d'offset commité invalide")),
+            .ok_or_else(|| corrupt(path, "invalid committed offset file")),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e.into()),
     }
 }
 
-/// Remplace l'offset commité, de façon atomique et durable.
+/// Replaces the committed offset, atomically and durably.
 pub(super) fn write(path: &Path, offset: u64) -> Result<()> {
     write_atomic(path, &encode(offset))
 }

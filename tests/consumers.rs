@@ -1,4 +1,4 @@
-//! Tests des consumers : lecture, commit, reprise, relais entre membres.
+//! Consumer tests: reading, committing, resuming, handover between members.
 
 #[allow(dead_code)]
 mod common;
@@ -20,19 +20,19 @@ fn manual() -> ConsumerConfig {
     ConsumerConfig::default()
 }
 
-/// Appelle `poll` jusqu'à avoir `count` messages, ou échoue après 10 s.
+/// Call `poll` until `count` messages are received, or fail after 10 s.
 fn poll_exactly(consumer: &mut Consumer, count: usize) -> Vec<ConsumerRecord> {
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut out = Vec::new();
     while out.len() < count {
         assert!(
             Instant::now() < deadline,
-            "seulement {} messages sur {count}",
+            "only {} messages out of {count}",
             out.len()
         );
         out.extend(consumer.poll(POLL).unwrap());
     }
-    assert_eq!(out.len(), count, "messages en trop");
+    assert_eq!(out.len(), count, "too many messages");
     out
 }
 
@@ -40,7 +40,7 @@ fn assert_nothing_more(consumer: &mut Consumer) {
     assert!(consumer.poll(Duration::from_millis(50)).unwrap().is_empty());
 }
 
-/// Écrit les messages `range` dans la partition 0 de `topic`.
+/// Write messages `range` to partition 0 of `topic`.
 fn produce(db: &Db, topic: &str, range: std::ops::Range<u64>) {
     let mut producer = db.producer(topic).unwrap();
     for i in range {
@@ -52,7 +52,7 @@ fn offsets(records: &[ConsumerRecord]) -> Vec<u64> {
     records.iter().map(|r| r.offset).collect()
 }
 
-/// L'offset commité, lu directement sur le disque.
+/// The committed offset, read directly from disk.
 fn committed_on_disk(data: &Path, group: &str, topic: &str, partition: u32) -> Option<u64> {
     let path = data.join(format!("groups/{group}/offsets/{topic}-{partition}"));
     let bytes = fs::read(path).ok()?;
@@ -60,19 +60,19 @@ fn committed_on_disk(data: &Path, group: &str, topic: &str, partition: u32) -> O
 }
 
 // ---------------------------------------------------------------------------
-// Processus enfant
+// Child process
 // ---------------------------------------------------------------------------
 
-/// Point d'entrée des processus enfants. Ne fait rien dans un test normal.
+/// Entry point for child processes. Does nothing in a normal test run.
 #[test]
 fn child_process() {
     let Some((scenario, db)) = common::child_scenario() else {
         return;
     };
     match scenario.as_str() {
-        // Lit au moins 40 messages, commite, puis attend d'être tué.
+        // Read at least 40 messages, commit, then wait to be killed.
         "consume_commit_then_hang" => {
-            // Petits poll : le commit tombe au milieu du flux, pas à la fin.
+            // Small polls: the commit lands mid-stream, not at the end.
             let small = ConsumerConfig {
                 max_poll_bytes: 500,
                 ..ConsumerConfig::default()
@@ -87,12 +87,12 @@ fn child_process() {
                 thread::sleep(Duration::from_secs(1));
             }
         }
-        other => panic!("scénario inconnu : {other}"),
+        other => panic!("unknown scenario: {other}"),
     }
 }
 
 // ---------------------------------------------------------------------------
-// Lecture et commit
+// Reading and committing
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -119,7 +119,7 @@ fn consumer_reads_every_partition_in_order() {
     }
     assert_eq!(
         received, sent,
-        "chaque partition doit être lue en entier, dans l'ordre"
+        "each partition must be read in full, in order"
     );
     assert_nothing_more(&mut consumer);
 }
@@ -155,7 +155,7 @@ fn uncommitted_messages_are_read_again() {
 
     let mut consumer = db.consumer("billing", &["stream"], manual()).unwrap();
     poll_exactly(&mut consumer, 10);
-    drop(consumer); // sans commit
+    drop(consumer); // without committing
 
     let mut consumer = db.consumer("billing", &["stream"], manual()).unwrap();
     assert_eq!(
@@ -176,7 +176,7 @@ fn auto_commit_commits_on_poll_and_on_close() {
 
     let mut consumer = db.consumer("billing", &["stream"], auto.clone()).unwrap();
     poll_exactly(&mut consumer, 10);
-    assert_nothing_more(&mut consumer); // ce poll commite les 10 messages rendus
+    assert_nothing_more(&mut consumer); // this poll commits the 10 returned messages
     assert_eq!(
         committed_on_disk(dir.path(), "billing", "stream", 0),
         Some(10)
@@ -184,7 +184,7 @@ fn auto_commit_commits_on_poll_and_on_close() {
 
     produce(&db, "stream", 10..13);
     poll_exactly(&mut consumer, 3);
-    drop(consumer); // la fermeture commite les 3 derniers
+    drop(consumer); // closing commits the last 3
 
     let mut consumer = db.consumer("billing", &["stream"], auto).unwrap();
     assert_eq!(consumer.position("stream", 0), Some(13));
@@ -261,7 +261,7 @@ fn poll_returns_as_soon_as_a_message_arrives() {
     assert_eq!(offsets(&records), vec![0]);
     assert!(
         started.elapsed() < Duration::from_secs(2),
-        "poll trop lent à réagir"
+        "poll too slow to react"
     );
     writer.join().unwrap();
 }
@@ -284,11 +284,11 @@ fn max_poll_bytes_splits_large_backlogs_without_losing_any() {
 }
 
 // ---------------------------------------------------------------------------
-// Relais entre membres
+// Handover between members
 // ---------------------------------------------------------------------------
 
-/// Avec une seule partition, le second membre n'a rien tant que le premier
-/// vit, puis la reprend exactement au commit quand le premier s'en va.
+/// With a single partition, the second member gets nothing while the first
+/// is alive, then takes it over exactly at the commit when the first leaves.
 #[test]
 fn departing_member_hands_over_from_its_commit() {
     let (_dir, db) = new_db();
@@ -300,7 +300,7 @@ fn departing_member_hands_over_from_its_commit() {
     assert_eq!(first.assignment().len(), 1);
     assert!(
         second.assignment().is_empty(),
-        "la partition est déjà prise"
+        "the partition is already taken"
     );
     assert_nothing_more(&mut second);
 
@@ -314,12 +314,12 @@ fn departing_member_hands_over_from_its_commit() {
     assert_eq!(
         offsets(&records),
         vec![10, 11],
-        "reprise exacte au commit, sans doublon"
+        "resumes exactly at the commit, without duplicates"
     );
 }
 
-/// Un membre tué dans un autre processus libère ses partitions ; le suivant
-/// reprend à son dernier commit.
+/// A member killed in another process releases its partitions; the next one
+/// resumes from its last commit.
 #[test]
 fn killed_member_hands_over_from_its_last_commit() {
     let (dir, db) = new_db();
@@ -333,10 +333,10 @@ fn killed_member_hands_over_from_its_last_commit() {
     let committed = committed_on_disk(dir.path(), "g", "stream", 0).unwrap();
     assert!(
         (40..100).contains(&committed),
-        "commit à {committed} : il doit rester des messages à reprendre"
+        "commit at {committed}: there must be messages left to resume"
     );
 
-    // L'enfant tient la partition : ce membre ne reçoit rien.
+    // The child holds the partition: this member receives nothing.
     let mut consumer = db.consumer("g", &["stream"], manual()).unwrap();
     assert!(consumer.assignment().is_empty());
     assert_nothing_more(&mut consumer);
@@ -349,7 +349,7 @@ fn killed_member_hands_over_from_its_last_commit() {
 }
 
 // ---------------------------------------------------------------------------
-// Erreurs
+// Errors
 // ---------------------------------------------------------------------------
 
 #[test]

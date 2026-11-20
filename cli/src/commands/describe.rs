@@ -1,4 +1,4 @@
-//! `mojay describe` : configuration, partitions, segments et offsets des groupes.
+//! `mojay describe`: configuration, partitions, segments and group offsets.
 
 use std::io::Write;
 use std::path::Path;
@@ -19,7 +19,7 @@ pub fn run(data: &Path, topic: &str, out: &mut impl Write) -> CliResult {
     writeln!(
         out,
         "{:<10} {:>12} {:>12} {:>12} {:>9} {:>12}",
-        "partition", "début", "limite", "messages", "segments", "taille"
+        "partition", "start", "read limit", "messages", "segments", "size"
     )?;
     for p in &description.partitions {
         writeln!(
@@ -36,13 +36,13 @@ pub fn run(data: &Path, topic: &str, out: &mut impl Write) -> CliResult {
 
     writeln!(out)?;
     if committed.is_empty() {
-        writeln!(out, "aucun groupe n'a commité d'offset sur ce topic")?;
+        writeln!(out, "no group has committed an offset on this topic")?;
         return Ok(());
     }
     writeln!(
         out,
         "{:<20} {:<10} {:>12} {:>12}",
-        "groupe", "partition", "commité", "retard"
+        "group", "partition", "committed", "lag"
     )?;
     for c in &committed {
         let limit = description.partitions[c.partition as usize].read_limit;
@@ -64,29 +64,29 @@ fn write_config(description: &TopicDescription, out: &mut impl Write) -> CliResu
     writeln!(out, "partitions  {}", config.partitions)?;
     writeln!(
         out,
-        "segments    {} au plus",
+        "segments    {} max",
         display::size(config.log.segment_max_bytes)
     )?;
     let fsync = match config.log.fsync {
         FsyncPolicy::Always => "always".to_string(),
         FsyncPolicy::Never => "never".to_string(),
-        FsyncPolicy::Interval(every) => format!("toutes les {}", display::duration(every)),
+        FsyncPolicy::Interval(every) => format!("every {}", display::duration(every)),
     };
     writeln!(out, "fsync       {fsync}")?;
-    writeln!(out, "rétention   {}", retention(&config.log.retention))?;
+    writeln!(out, "retention   {}", retention(&config.log.retention))?;
     Ok(())
 }
 
 fn retention(retention: &Retention) -> String {
     let mut limits = Vec::new();
     if let Some(bytes) = retention.max_bytes {
-        limits.push(format!("{} par partition", display::size(bytes)));
+        limits.push(format!("{} per partition", display::size(bytes)));
     }
     if let Some(age) = retention.max_age {
-        limits.push(format!("{} par segment", display::duration(age)));
+        limits.push(format!("{} per segment", display::duration(age)));
     }
     if limits.is_empty() {
-        "aucune".to_string()
+        "none".to_string()
     } else {
         limits.join(", ")
     }

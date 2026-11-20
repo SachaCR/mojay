@@ -1,5 +1,5 @@
-//! `mojay dump` : le contenu brut d'un segment, pour vérifier à l'œil ce qui
-//! est stocké. Lecture seule : rien n'est jamais réparé.
+//! `mojay dump`: the raw contents of a segment, to eyeball what is
+//! stored. Read-only: nothing is ever repaired.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -11,15 +11,15 @@ use crate::display;
 
 #[derive(Debug, clap::Args)]
 pub struct Args {
-    /// Un fichier de segment `.log`, ou un nom de topic.
+    /// A `.log` segment file, or a topic name.
     pub target: String,
-    /// Avec un topic : une seule partition. Par défaut, toutes.
+    /// With a topic: a single partition. Defaults to all.
     #[arg(long, short)]
     pub partition: Option<u32>,
-    /// Afficher aussi les entrées de l'index.
+    /// Also show the index entries.
     #[arg(long)]
     pub index: bool,
-    /// Afficher les valeurs en entier, sans les tronquer.
+    /// Show values in full, without truncating them.
     #[arg(long)]
     pub full: bool,
 }
@@ -31,13 +31,13 @@ pub fn run(data: &Path, args: Args, out: &mut impl Write) -> CliResult {
     Ok(())
 }
 
-/// Les segments à afficher : le fichier donné, ou ceux du topic.
+/// The segments to show: the given file, or those of the topic.
 fn segments(data: &Path, args: &Args) -> Result<Vec<PathBuf>, CliError> {
     let as_file = Path::new(&args.target);
     if as_file.extension().is_some_and(|e| e == "log") {
         if !as_file.is_file() {
             return Err(CliError::Message(format!(
-                "fichier introuvable : {}",
+                "file not found: {}",
                 args.target
             )));
         }
@@ -51,7 +51,7 @@ fn segments(data: &Path, args: &Args) -> Result<Vec<PathBuf>, CliError> {
         .collect::<Vec<_>>();
     if partitions.is_empty() {
         return Err(CliError::Message(format!(
-            "partition inexistante (le topic en a {})",
+            "partition does not exist (the topic has {})",
             description.partitions.len()
         )));
     }
@@ -64,7 +64,7 @@ fn segments(data: &Path, args: &Args) -> Result<Vec<PathBuf>, CliError> {
 fn write_dump(dump: &SegmentDump, args: &Args, out: &mut impl Write) -> CliResult {
     let base = dump
         .base_offset
-        .map_or_else(|| "inconnue".to_string(), |b| b.to_string());
+        .map_or_else(|| "unknown".to_string(), |b| b.to_string());
     writeln!(
         out,
         "== {} ({}, base {base})",
@@ -72,17 +72,17 @@ fn write_dump(dump: &SegmentDump, args: &Args, out: &mut impl Write) -> CliResul
         display::size(dump.size_bytes)
     )?;
     match &dump.header {
-        Ok(version) => writeln!(out, "en-tête valide, format v{version}")?,
+        Ok(version) => writeln!(out, "valid header, format v{version}")?,
         Err(reason) => {
-            writeln!(out, "!! en-tête invalide : {reason}")?;
+            writeln!(out, "!! invalid header: {reason}")?;
             return Ok(());
         }
     }
 
     writeln!(
         out,
-        "{:>10} {:>10} {:>7}  {:<24}  contenu",
-        "position", "offset", "taille", "horodatage"
+        "{:>10} {:>10} {:>7}  {:<24}  contents",
+        "position", "offset", "size", "timestamp"
     )?;
     for entry in &dump.records {
         let r = &entry.record;
@@ -101,11 +101,11 @@ fn write_dump(dump: &SegmentDump, args: &Args, out: &mut impl Write) -> CliResul
         }
         writeln!(out)?;
     }
-    writeln!(out, "{} enregistrement(s) lisible(s)", dump.records.len())?;
+    writeln!(out, "{} readable record(s)", dump.records.len())?;
     if let Some(tail) = &dump.unreadable_tail {
         writeln!(
             out,
-            "!! fin illisible à la position {} : {} ({})",
+            "!! unreadable tail at position {}: {} ({})",
             tail.position,
             display::size(tail.bytes),
             tail.reason
@@ -121,10 +121,10 @@ fn write_dump(dump: &SegmentDump, args: &Args, out: &mut impl Write) -> CliResul
 
 fn write_index(dump: &SegmentDump, out: &mut impl Write) -> CliResult {
     let Some(index) = &dump.index else {
-        writeln!(out, "index : absent")?;
+        writeln!(out, "index: absent")?;
         return Ok(());
     };
-    writeln!(out, "index : {} entrée(s)", index.entries.len())?;
+    writeln!(out, "index: {} entry(ies)", index.entries.len())?;
     for entry in &index.entries {
         let offset = match dump.base_offset {
             Some(base) => (base + u64::from(entry.relative_offset)).to_string(),
@@ -133,7 +133,7 @@ fn write_index(dump: &SegmentDump, out: &mut impl Write) -> CliResult {
         let note = if entry.valid {
             ""
         } else {
-            "  (incohérente, ignorée)"
+            "  (inconsistent, ignored)"
         };
         writeln!(
             out,
@@ -144,7 +144,7 @@ fn write_index(dump: &SegmentDump, out: &mut impl Write) -> CliResult {
     if index.leftover_bytes > 0 {
         writeln!(
             out,
-            "  !! {} octet(s) en trop à la fin",
+            "  !! {} extra byte(s) at the end",
             index.leftover_bytes
         )?;
     }

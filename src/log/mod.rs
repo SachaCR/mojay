@@ -1,11 +1,11 @@
-//! Le log d'une partition : une suite ordonnée de segments, dans son propre dossier.
+//! A partition's log: an ordered sequence of segments, in its own directory.
 //!
-//! - [`PartitionLog`] : le côté writer, seul à ajouter et à réparer.
-//! - [`PartitionReader`] : le côté lecteur, en lecture seule, borné par la
-//!   limite de lecture que publie le writer.
+//! - [`PartitionLog`]: the writer side, the only one that appends and repairs.
+//! - [`PartitionReader`]: the reader side, read-only, bounded by the
+//!   read limit published by the writer.
 //!
-//! Ce module ne prend aucun verrou inter-processus : c'est la couche topic qui
-//! garantit qu'un seul writer existe par partition.
+//! This module takes no inter-process lock: the topic layer
+//! guarantees that only one writer exists per partition.
 
 mod reader;
 mod retention;
@@ -23,28 +23,28 @@ use crate::error::{Error, Result, corrupt};
 use crate::record::{MAX_RECORD_SIZE, Record};
 use crate::segment::{self, HEADER_SIZE, ReadRequest, SegmentRead};
 
-/// Quand forcer l'écriture des données sur le disque.
+/// When to force data to disk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FsyncPolicy {
-    /// `fsync` après chaque ajout, avant de rendre les messages lisibles.
-    /// Survit à une coupure de courant. C'est le défaut.
+    /// `fsync` after each append, before making the messages readable.
+    /// Survives a power loss. This is the default.
     Always,
-    /// `fsync` périodique, par un thread du producteur. Un [`PartitionLog`]
-    /// utilisé seul n'en fait rien : l'appelant appelle [`PartitionLog::sync`].
+    /// Periodic `fsync`, by a producer thread. A [`PartitionLog`]
+    /// used on its own does nothing with it: the caller calls [`PartitionLog::sync`].
     Interval(Duration),
-    /// Laissé à l'OS. Survit à un crash du processus, pas à une coupure de courant.
+    /// Left to the OS. Survives a process crash, not a power loss.
     Never,
 }
 
-/// Configuration d'un log de partition.
+/// Configuration of a partition log.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogConfig {
-    /// Taille au-delà de laquelle on passe au segment suivant.
+    /// Size beyond which we roll over to the next segment.
     pub segment_max_bytes: u64,
-    /// Nombre d'octets écrits entre deux entrées d'index.
+    /// Number of bytes written between two index entries.
     pub index_interval_bytes: u64,
     pub fsync: FsyncPolicy,
-    /// Limites de taille et d'âge de la partition. Par défaut, aucune.
+    /// Size and age limits of the partition. None by default.
     pub retention: Retention,
 }
 
@@ -59,28 +59,28 @@ impl Default for LogConfig {
     }
 }
 
-/// Les positions d'index sont des `u32` : un segment ne peut pas dépasser 4 Gio,
-/// marge comprise pour un dernier enregistrement de taille maximale.
+/// Index positions are `u32`s: a segment cannot exceed 4 GiB,
+/// including headroom for a final record of maximum size.
 const MAX_SEGMENT_BYTES: u64 = u32::MAX as u64 - MAX_RECORD_SIZE as u64;
 
 impl LogConfig {
     pub(crate) fn validate(&self) -> Result<()> {
         if self.segment_max_bytes <= HEADER_SIZE || self.segment_max_bytes > MAX_SEGMENT_BYTES {
             return Err(Error::InvalidConfig(format!(
-                "segment_max_bytes doit être compris entre {} et {MAX_SEGMENT_BYTES}",
+                "segment_max_bytes must be between {} and {MAX_SEGMENT_BYTES}",
                 HEADER_SIZE + 1
             )));
         }
         if self.fsync == FsyncPolicy::Interval(Duration::ZERO) {
             return Err(Error::InvalidConfig(
-                "l'intervalle de fsync doit être positif".into(),
+                "the fsync interval must be positive".into(),
             ));
         }
         Ok(())
     }
 }
 
-/// Offsets de base des segments présents dans `dir`, triés.
+/// Base offsets of the segments present in `dir`, sorted.
 pub(crate) fn list_segment_bases(dir: &Path) -> Result<Vec<u64>> {
     let mut bases = Vec::new();
     for entry in fs::read_dir(dir)? {
@@ -91,7 +91,7 @@ pub(crate) fn list_segment_bases(dir: &Path) -> Result<Vec<u64>> {
         if stem.len() == 20 && stem.bytes().all(|b| b.is_ascii_digit()) {
             let base = stem
                 .parse()
-                .map_err(|_| corrupt(dir.join(&name), "nom de segment invalide"))?;
+                .map_err(|_| corrupt(dir.join(&name), "invalid segment name"))?;
             bases.push(base);
         }
     }
@@ -99,8 +99,8 @@ pub(crate) fn list_segment_bases(dir: &Path) -> Result<Vec<u64>> {
     Ok(bases)
 }
 
-/// Supprime les index dont le `.log` n'existe plus : restes d'une suppression
-/// de segment interrompue par un crash.
+/// Deletes indexes whose `.log` no longer exists: leftovers of a segment
+/// deletion interrupted by a crash.
 pub(crate) fn remove_orphan_indexes(dir: &Path, bases: &[u64]) -> Result<()> {
     for entry in fs::read_dir(dir)? {
         let path = entry?.path();
@@ -116,18 +116,18 @@ pub(crate) fn remove_orphan_indexes(dir: &Path, bases: &[u64]) -> Result<()> {
     Ok(())
 }
 
-/// Pourquoi une lecture à travers les segments s'est arrêtée.
+/// Why a read across segments stopped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ReadStop {
-    /// Le budget d'octets est atteint.
+    /// The byte budget has been reached.
     BudgetReached,
-    /// Tous les segments connus ont été lus jusqu'à `end`.
+    /// All known segments have been read up to `end`.
     SegmentsExhausted,
 }
 
-/// Lit à travers les segments, dans l'ordre, à partir de `from` et jusqu'à
-/// `end` (exclu). `bases` donne l'offset de base de chaque segment, trié ;
-/// `read_segment(i, …)` lit le segment `i`. `used` cumule les octets pris.
+/// Reads across segments, in order, starting from `from` and up to
+/// `end` (exclusive). `bases` gives the base offset of each segment, sorted;
+/// `read_segment(i, …)` reads segment `i`. `used` accumulates the bytes taken.
 pub(crate) fn read_across(
     bases: &[u64],
     from: u64,

@@ -1,17 +1,17 @@
-//! Consumer groups, sans serveur : le système de fichiers sert de coordinateur.
+//! Serverless consumer groups: the file system acts as the coordinator.
 //!
 //! ```text
 //! groups/<group>/
-//!   members/<id>.lock             # flock tenu = membre vivant
-//!   partitions/<topic>-<p>.lock   # flock tenu = partition possédée par un membre
-//!   offsets/<topic>-<p>           # offset commité du groupe pour cette partition
+//!   members/<id>.lock             # flock held = live member
+//!   partitions/<topic>-<p>.lock   # flock held = partition owned by a member
+//!   offsets/<topic>-<p>           # the group's committed offset for this partition
 //! ```
 //!
-//! Tout consumer appartient à un groupe ; un consumer seul est l'unique membre
-//! du groupe qui porte son nom.
+//! Every consumer belongs to a group; a standalone consumer is the only member
+//! of the group named after it.
 //!
-//! Les membres vivants se répartissent les partitions (voir [`Consumer`]) :
-//! le membre de rang r parmi N vivants en possède ⌊P / N⌋, plus une si
+//! The live members share the partitions (see [`Consumer`]):
+//! the member of rank r among N live members owns ⌊P / N⌋ of them, plus one if
 //! r < P mod N.
 
 mod config;
@@ -32,14 +32,14 @@ pub(crate) use describe::committed_offsets;
 use crate::error::Result;
 use crate::topic::validate_name;
 
-/// Les chemins d'un groupe.
+/// The paths of a group.
 #[derive(Debug, Clone)]
 struct GroupPaths {
     dir: PathBuf,
 }
 
 impl GroupPaths {
-    /// Le dossier du groupe `name`, créé au besoin.
+    /// The directory of group `name`, created if needed.
     fn open(groups_dir: &Path, name: &str) -> Result<Self> {
         validate_name(name)?;
         let dir = groups_dir.join(name);

@@ -1,9 +1,9 @@
-//! Verrous inter-processus sur fichier, avec `flock`.
+//! Inter-process file locks, using `flock`.
 //!
-//! On n'utilise jamais les verrous POSIX `fcntl` : ils sont relâchés dès que le
-//! processus ferme *n'importe quel* descripteur sur le fichier. Un verrou
-//! `flock` appartient à la description de fichier ouverte : il est relâché à la
-//! fermeture de *ce* descripteur, ou par l'OS si le processus meurt.
+//! POSIX `fcntl` locks are never used: they are released as soon as the
+//! process closes *any* descriptor on the file. A `flock` lock
+//! belongs to the open file description: it is released when
+//! *that* descriptor is closed, or by the OS if the process dies.
 
 use std::fs::{File, OpenOptions};
 use std::io;
@@ -14,26 +14,26 @@ use rustix::io::Errno;
 
 use crate::error::Result;
 
-/// Un verrou exclusif, tenu tant que la valeur vit.
+/// An exclusive lock, held for as long as the value lives.
 #[derive(Debug)]
 pub(crate) struct FileLock {
     file: File,
 }
 
-/// Résultat d'une tentative de verrouillage d'un fichier qui doit déjà exister.
+/// Result of an attempt to lock a file that must already exist.
 #[derive(Debug)]
 pub(crate) enum Probe {
-    /// Le fichier n'existe pas (ou plus).
+    /// The file does not exist (or no longer exists).
     Missing,
-    /// Quelqu'un tient le verrou.
+    /// Someone holds the lock.
     Held,
-    /// Personne ne le tenait : il est maintenant à nous.
+    /// Nobody was holding it: it is now ours.
     Acquired(FileLock),
 }
 
 impl FileLock {
-    /// Tente de prendre le verrou exclusif sur `path` (créé au besoin), sans attendre.
-    /// Renvoie `None` si quelqu'un d'autre le tient, y compris dans ce processus.
+    /// Tries to take the exclusive lock on `path` (created if needed), without waiting.
+    /// Returns `None` if someone else holds it, including in this process.
     pub(crate) fn try_exclusive(path: &Path) -> Result<Option<Self>> {
         let file = OpenOptions::new()
             .read(true)
@@ -44,8 +44,8 @@ impl FileLock {
         Self::try_lock(file)
     }
 
-    /// Comme [`try_exclusive`](Self::try_exclusive), mais sans jamais créer le
-    /// fichier : sert à savoir si le propriétaire d'un fichier est encore vivant.
+    /// Like [`try_exclusive`](Self::try_exclusive), but never creates the
+    /// file: used to find out whether a file's owner is still alive.
     pub(crate) fn probe(path: &Path) -> Result<Probe> {
         let file = match OpenOptions::new().read(true).write(true).open(path) {
             Ok(file) => file,
@@ -68,15 +68,15 @@ impl FileLock {
 }
 
 impl Drop for FileLock {
-    /// Déverrouille explicitement avant de fermer le fichier.
+    /// Explicitly unlocks before closing the file.
     ///
-    /// Fermer le descripteur ne suffit pas : si un autre thread vient de lancer
-    /// un sous-processus (`fork`), l'enfant partage la même description de
-    /// fichier jusqu'à son `exec`, et le verrou survivrait jusque-là. `LOCK_UN`
-    /// libère le verrou pour toutes les copies à la fois.
+    /// Closing the descriptor is not enough: if another thread has just spawned
+    /// a subprocess (`fork`), the child shares the same open file
+    /// description until its `exec`, and the lock would survive until then. `LOCK_UN`
+    /// releases the lock for all copies at once.
     fn drop(&mut self) {
-        // Un échec ici n'a pas de recours : la fermeture du fichier, juste
-        // après, relâche le verrou dans le cas courant.
+        // A failure here has no remedy: closing the file, right
+        // afterwards, releases the lock in the common case.
         let _ = flock(&self.file, FlockOperation::Unlock);
     }
 }
@@ -101,7 +101,7 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let path = dir.path().join("member.lock");
         assert!(matches!(FileLock::probe(&path).unwrap(), Probe::Missing));
-        assert!(!path.exists(), "la sonde ne crée jamais le fichier");
+        assert!(!path.exists(), "the probe never creates the file");
 
         let held = FileLock::try_exclusive(&path).unwrap().unwrap();
         assert!(matches!(FileLock::probe(&path).unwrap(), Probe::Held));

@@ -1,5 +1,5 @@
-//! Les événements de la démo : la vie de commandes d'une petite boutique.
-//! Logique pure : un générateur pseudo-aléatoire déterministe, sans dépendance.
+//! The demo's events: the lifecycle of orders in a small shop.
+//! Pure logic: a deterministic pseudo-random generator, with no dependencies.
 
 use serde::Serialize;
 
@@ -11,7 +11,7 @@ const KINDS: [&str; 4] = [
 ];
 const CUSTOMERS: u64 = 50;
 
-/// Un événement, tel qu'il est publié en JSON.
+/// An event, as published in JSON.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Event {
     pub id: u64,
@@ -19,18 +19,18 @@ pub struct Event {
     pub kind: &'static str,
     pub customer: String,
     pub amount_cents: u64,
-    /// Millisecondes depuis l'epoch.
+    /// Milliseconds since the epoch.
     pub emitted_at: u64,
 }
 
 impl Event {
     pub fn to_json(&self) -> Vec<u8> {
-        // Une structure de chaînes et d'entiers se sérialise toujours.
-        serde_json::to_vec(self).expect("un Event est toujours sérialisable")
+        // A struct of strings and integers always serializes.
+        serde_json::to_vec(self).expect("an Event always serializes")
     }
 }
 
-/// Fabrique des événements variés mais reproductibles à graine égale.
+/// Produces varied events, reproducible for a given seed.
 pub struct EventGenerator {
     state: u64,
     next_id: u64,
@@ -39,7 +39,7 @@ pub struct EventGenerator {
 impl EventGenerator {
     pub fn new(seed: u64) -> Self {
         Self {
-            // xorshift ne doit jamais partir de zéro.
+            // xorshift must never start from zero.
             state: seed | 1,
             next_id: 0,
         }
@@ -57,7 +57,7 @@ impl EventGenerator {
         }
     }
 
-    /// xorshift64* : largement assez pour varier des données de démo.
+    /// xorshift64*: more than enough to vary demo data.
     fn random(&mut self) -> u64 {
         self.state ^= self.state >> 12;
         self.state ^= self.state << 25;

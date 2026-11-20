@@ -1,21 +1,21 @@
-//! Rétention : quels segments supprimer pour respecter les limites de taille
-//! et d'âge d'une partition. Logique pure, sans I/O.
+//! Retention: which segments to delete to respect a partition's size
+//! and age limits. Pure logic, with no I/O.
 //!
-//! On ne supprime que des segments scellés entiers, du plus ancien au plus
-//! récent, sans jamais toucher au segment actif : la partition reste une suite
-//! continue d'offsets, qui commence simplement plus loin.
+//! Only whole sealed segments are deleted, from oldest to most
+//! recent, never touching the active segment: the partition stays a continuous
+//! sequence of offsets, which simply starts further along.
 
 use std::time::{Duration, SystemTime};
 
-/// Limites de rétention d'une partition. Par défaut, aucune : on garde tout.
+/// Retention limits of a partition. None by default: everything is kept.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Retention {
-    /// Taille maximale de la partition, segment actif compris, vérifiée à
-    /// chaque ajout. Au-delà, les segments scellés les plus anciens sont
-    /// supprimés. Le segment actif n'étant jamais supprimé, la partition ne
-    /// dépasse cette taille que si le segment actif seul la dépasse.
+    /// Maximum size of the partition, active segment included, checked on
+    /// each append. Beyond it, the oldest sealed segments are
+    /// deleted. Since the active segment is never deleted, the partition only
+    /// exceeds this size if the active segment alone exceeds it.
     pub max_bytes: Option<u64>,
-    /// Âge maximal d'un segment scellé, mesuré depuis sa dernière écriture.
+    /// Maximum age of a sealed segment, measured from its last write.
     pub max_age: Option<Duration>,
 }
 
@@ -25,19 +25,19 @@ impl Retention {
     }
 }
 
-/// Ce qu'il faut savoir d'un segment scellé pour décider de le supprimer.
+/// What needs to be known about a sealed segment to decide whether to delete it.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SealedSegment {
     pub(crate) size: u64,
-    /// Date de la dernière écriture dans le segment. `None` quand elle n'est
-    /// pas utile (pas de limite d'âge) : on évite alors de la lire sur le disque.
+    /// Time of the last write to the segment. `None` when it is not
+    /// needed (no age limit): this avoids reading it from disk.
     pub(crate) last_write: Option<SystemTime>,
 }
 
-/// Nombre de segments scellés à supprimer, en partant du plus ancien.
+/// Number of sealed segments to delete, starting from the oldest.
 ///
-/// `sealed` liste les segments scellés du plus ancien au plus récent ;
-/// `active_size` est la taille du segment actif.
+/// `sealed` lists the sealed segments from oldest to most recent;
+/// `active_size` is the size of the active segment.
 pub(crate) fn segments_to_delete(
     sealed: &[SealedSegment],
     active_size: u64,
@@ -46,7 +46,7 @@ pub(crate) fn segments_to_delete(
 ) -> usize {
     let too_old = |s: &SealedSegment| {
         retention.max_age.is_some_and(|max| {
-            // Une date dans le futur (horloge reculée) n'est jamais trop vieille.
+            // A date in the future (clock moved backwards) is never too old.
             s.last_write
                 .is_some_and(|written| now.duration_since(written).is_ok_and(|age| age > max))
         })
@@ -74,7 +74,7 @@ mod tests {
         SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000)
     }
 
-    /// Des segments de 100 octets, écrits il y a `ages` minutes (le plus ancien d'abord).
+    /// 100-byte segments, written `ages` minutes ago (oldest first).
     fn sealed(ages: &[u64]) -> Vec<SealedSegment> {
         ages.iter()
             .map(|&minutes| SealedSegment {
@@ -99,7 +99,7 @@ mod tests {
             max_bytes: Some(max_bytes),
             max_age: None,
         };
-        // 3 × 100 + 50 = 350 octets.
+        // 3 × 100 + 50 = 350 bytes.
         let segments = sealed(&[3, 2, 1]);
         assert_eq!(segments_to_delete(&segments, 50, &limit(350), now()), 0);
         assert_eq!(segments_to_delete(&segments, 50, &limit(250), now()), 1);

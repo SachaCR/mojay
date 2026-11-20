@@ -1,11 +1,11 @@
-//! Un segment = un fichier `.log` append-only et son index clairsemé `.idx`.
+//! A segment = an append-only `.log` file and its sparse `.idx` index.
 //!
-//! Le `.log` commence par un en-tête de 16 octets (magic `MOJAY\0`, version
-//! `u16`, 8 octets réservés), suivi des enregistrements les uns après les autres.
+//! The `.log` starts with a 16-byte header (magic `MOJAY\0`, `u16`
+//! version, 8 reserved bytes), followed by the records one after another.
 //!
-//! - [`Segment`] : le côté writer, qui ajoute, répare et indexe.
-//! - [`SegmentReader`] : le côté lecteur, en lecture seule, utilisable depuis un
-//!   autre processus pendant que le writer écrit.
+//! - [`Segment`]: the writer side, which appends, repairs and indexes.
+//! - [`SegmentReader`]: the reader side, read-only, usable from another
+//!   process while the writer is writing.
 
 mod reader;
 mod writer;
@@ -34,33 +34,33 @@ pub(crate) fn index_path(dir: &Path, base_offset: u64) -> PathBuf {
     dir.join(format!("{base_offset:020}.idx"))
 }
 
-/// Ce qu'une lecture de segment doit renvoyer.
+/// What a segment read must return.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ReadRequest {
-    /// Premier offset voulu (inclus).
+    /// First wanted offset (inclusive).
     pub(crate) from: u64,
-    /// Offset où s'arrêter (exclu) : la limite de lecture, ou la base du segment suivant.
+    /// Offset at which to stop (exclusive): the read limit, or the base of the next segment.
     pub(crate) end: u64,
-    /// Nombre d'octets encodés à ne pas dépasser.
+    /// Number of encoded bytes not to exceed.
     pub(crate) budget: usize,
-    /// Prendre le premier enregistrement même s'il dépasse le budget.
+    /// Take the first record even if it exceeds the budget.
     pub(crate) take_one: bool,
 }
 
-/// Pourquoi une lecture de segment s'est arrêtée.
+/// Why a segment read stopped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SegmentRead {
-    /// Plus rien à lire dans ce segment avant `end` : la lecture peut continuer au suivant.
+    /// Nothing left to read in this segment before `end`: reading can continue with the next one.
     Exhausted { taken: usize },
-    /// Le prochain enregistrement dépasserait le budget : la lecture s'arrête là.
+    /// The next record would exceed the budget: reading stops there.
     BudgetReached,
 }
 
-/// Lit les enregistrements demandés par `req`, à partir de la position `start`
-/// et sans dépasser `size` octets du fichier.
+/// Reads the records requested by `req`, starting at position `start`
+/// and without going past `size` bytes of the file.
 ///
-/// Au-delà de `req.end`, un autre processus peut être en train d'écrire : un
-/// enregistrement illisible n'y est pas une erreur. En deçà, c'en est une.
+/// Beyond `req.end`, another process may be writing: an
+/// unreadable record there is not an error. Before it, it is one.
 fn read_records(
     log: &File,
     path: &Path,
@@ -102,16 +102,13 @@ fn read_records(
                 if next_offset.is_some_and(|next| next >= req.end) {
                     return Ok(SegmentRead::Exhausted { taken });
                 }
-                return Err(corrupt(
-                    path,
-                    "enregistrement illisible avant la limite de lecture",
-                ));
+                return Err(corrupt(path, "unreadable record before the read limit"));
             }
         }
     }
 }
 
-/// Lecture positionnelle (`pread`) bornée, sans curseur partagé sur le fichier.
+/// Bounded positional read (`pread`), with no shared cursor on the file.
 struct PosReader<'a> {
     file: &'a File,
     pos: u64,
@@ -146,17 +143,17 @@ fn check_header(log: &File, path: &Path) -> Result<()> {
         .map_err(|reason| corrupt(path, reason))
 }
 
-/// Vérifie l'en-tête d'un segment et renvoie sa version de format.
+/// Checks a segment's header and returns its format version.
 pub(crate) fn parse_header(bytes: &[u8]) -> std::result::Result<u16, String> {
     let Some(h) = bytes.get(..HEADER_SIZE as usize) else {
-        return Err(format!("{} octets, en-tête incomplet", bytes.len()));
+        return Err(format!("{} bytes, incomplete header", bytes.len()));
     };
     if &h[..6] != MAGIC {
-        return Err("magic invalide, ce n'est pas un segment Mojay".into());
+        return Err("invalid magic, not a Mojay segment".into());
     }
     let version = u16::from_le_bytes([h[6], h[7]]);
     if version != FORMAT_VERSION {
-        return Err(format!("version de format {version} non supportée"));
+        return Err(format!("unsupported format version {version}"));
     }
     Ok(version)
 }

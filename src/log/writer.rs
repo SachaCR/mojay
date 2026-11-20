@@ -1,5 +1,5 @@
-//! Le côté writer d'une partition : seul le dernier segment (le segment actif)
-//! reçoit des écritures.
+//! The writer side of a partition: only the last segment (the active segment)
+//! receives writes.
 
 use std::fs;
 use std::ops::Range;
@@ -16,20 +16,20 @@ use crate::error::{Error, Result, corrupt};
 use crate::record::{self, Message, Record};
 use crate::segment::Segment;
 
-/// Le log append-only d'une partition, stocké dans son propre dossier.
+/// The append-only log of a partition, stored in its own directory.
 #[derive(Debug)]
 pub struct PartitionLog {
     dir: PathBuf,
     config: LogConfig,
-    /// Triés par offset de base ; le dernier est le segment actif. Jamais vide.
+    /// Sorted by base offset; the last one is the active segment. Never empty.
     segments: Vec<Segment>,
 }
 
 impl PartitionLog {
-    /// Ouvre le log du dossier `dir`, en le créant au besoin.
+    /// Opens the log in directory `dir`, creating it if needed.
     ///
-    /// La fin du segment actif est réparée si une écriture a été interrompue.
-    /// Renvoie [`Error::Corrupt`] si un segment scellé est illisible.
+    /// The end of the active segment is repaired if a write was interrupted.
+    /// Returns [`Error::Corrupt`] if a sealed segment is unreadable.
     pub fn open(dir: impl AsRef<Path>, config: LogConfig) -> Result<Self> {
         config.validate()?;
         let dir = dir.as_ref().to_path_buf();
@@ -50,7 +50,7 @@ impl PartitionLog {
                 .collect::<Result<_>>()?
         };
         check_continuity(&dir, &segments)?;
-        // D'après les segments ouverts, premier segment tout juste créé compris.
+        // From the open segments, including a freshly created first segment.
         let bases: Vec<u64> = segments.iter().map(Segment::base_offset).collect();
         remove_orphan_indexes(&dir, &bases)?;
         let mut log = Self {
@@ -62,27 +62,27 @@ impl PartitionLog {
         Ok(log)
     }
 
-    /// Premier offset encore disponible.
+    /// First offset still available.
     pub fn start_offset(&self) -> u64 {
         self.segments[0].base_offset()
     }
 
-    /// Offset que recevra le prochain message ajouté.
+    /// Offset that the next appended message will receive.
     pub fn next_offset(&self) -> u64 {
         self.active().next_offset()
     }
 
-    /// Ajoute un message et renvoie son offset.
+    /// Appends a message and returns its offset.
     pub fn append(&mut self, message: &Message) -> Result<u64> {
         self.append_batch(std::slice::from_ref(message))
             .map(|range| range.start)
     }
 
-    /// Ajoute des messages dans l'ordre et renvoie la plage d'offsets attribués.
+    /// Appends messages in order and returns the range of assigned offsets.
     ///
-    /// Tous les messages sont validés avant la première écriture : un message
-    /// invalide n'en laisse aucun écrit. Avec [`FsyncPolicy::Always`], tout
-    /// le lot est sur le disque au retour.
+    /// All messages are validated before the first write: an invalid
+    /// message leaves none of them written. With [`FsyncPolicy::Always`], the whole
+    /// batch is on disk on return.
     pub fn append_batch(&mut self, messages: &[Message]) -> Result<Range<u64>> {
         let sizes = messages
             .iter()
@@ -109,20 +109,20 @@ impl PartitionLog {
         if self.config.fsync == FsyncPolicy::Always {
             self.active().sync()?;
         }
-        // Un nouveau segment scellé peut avoir vieilli ; la taille, elle, se
-        // vérifie à chaque ajout, à partir des tailles connues en mémoire.
+        // A new sealed segment may have aged; size, on the other hand, is
+        // checked on each append, from the sizes known in memory.
         if rolled || self.exceeds_max_bytes() {
             self.enforce_retention()?;
         }
         Ok(first_offset..self.next_offset())
     }
 
-    /// Supprime les segments scellés les plus anciens qui dépassent la
-    /// rétention configurée, et renvoie leur nombre.
+    /// Deletes the oldest sealed segments that exceed the configured
+    /// retention, and returns how many were deleted.
     ///
-    /// Appelé à l'ouverture et à chaque nouveau segment. La limite d'âge
-    /// avance avec le temps, sans écriture : appeler cette méthode
-    /// régulièrement l'applique aussi pendant les périodes calmes.
+    /// Called on open and on each new segment. The age limit
+    /// advances with time, without any write: calling this method
+    /// regularly also applies it during quiet periods.
     pub fn enforce_retention(&mut self) -> Result<usize> {
         let retention = self.config.retention;
         if retention.is_unlimited() {
@@ -131,7 +131,7 @@ impl PartitionLog {
         let (active, sealed) = self
             .segments
             .split_last()
-            .expect("un log a toujours un segment actif");
+            .expect("a log always has an active segment");
         let sealed = sealed
             .iter()
             .map(|s| {
@@ -149,8 +149,8 @@ impl PartitionLog {
         if count == 0 {
             return Ok(0);
         }
-        // Les plus anciens d'abord : en cas d'échec, ce qui reste est toujours
-        // une suite continue de segments.
+        // Oldest first: on failure, what remains is always
+        // a continuous sequence of segments.
         for segment in self.segments.drain(..count) {
             segment.delete()?;
         }
@@ -158,12 +158,12 @@ impl PartitionLog {
         Ok(count)
     }
 
-    /// Lit les enregistrements à partir de `offset`, sans dépasser `max_bytes`
-    /// (taille encodée). Renvoie toujours au moins un enregistrement s'il en
-    /// existe un, même plus gros que `max_bytes`, pour ne jamais bloquer un lecteur.
+    /// Reads records starting from `offset`, without exceeding `max_bytes`
+    /// (encoded size). Always returns at least one record if one
+    /// exists, even if larger than `max_bytes`, so as never to block a reader.
     ///
-    /// Lire à [`next_offset`](Self::next_offset) renvoie une liste vide.
-    /// Renvoie [`Error::OffsetOutOfRange`] en dehors de `start_offset..=next_offset`.
+    /// Reading at [`next_offset`](Self::next_offset) returns an empty list.
+    /// Returns [`Error::OffsetOutOfRange`] outside `start_offset..=next_offset`.
     pub fn read(&self, offset: u64, max_bytes: usize) -> Result<Vec<Record>> {
         let (start, end) = (self.start_offset(), self.next_offset());
         if offset < start || offset > end {
@@ -186,12 +186,12 @@ impl PartitionLog {
 
     fn exceeds_max_bytes(&self) -> bool {
         self.config.retention.max_bytes.is_some_and(|max| {
-            // Un seul segment : rien à supprimer, le segment actif reste.
+            // Only one segment: nothing to delete, the active segment stays.
             self.segments.len() > 1 && self.segments.iter().map(Segment::size).sum::<u64>() > max
         })
     }
 
-    /// Force l'écriture sur le disque de tout ce qui a été ajouté.
+    /// Forces everything appended so far to disk.
     pub fn sync(&self) -> Result<()> {
         self.active().sync()
     }
@@ -199,22 +199,22 @@ impl PartitionLog {
     fn active(&self) -> &Segment {
         self.segments
             .last()
-            .expect("un log a toujours un segment actif")
+            .expect("a log always has an active segment")
     }
 
     fn active_mut(&mut self) -> &mut Segment {
         self.segments
             .last_mut()
-            .expect("un log a toujours un segment actif")
+            .expect("a log always has an active segment")
     }
 
-    /// Faut-il ouvrir un nouveau segment avant d'ajouter un enregistrement de `size` octets ?
+    /// Must a new segment be opened before appending a record of `size` bytes?
     fn needs_roll(&self, pending: &PendingWrite, size: usize) -> bool {
         let active = self.active();
         let has_records = !active.is_empty() || !pending.sizes.is_empty();
         let would_exceed =
             active.size() + (pending.bytes.len() + size) as u64 > self.config.segment_max_bytes;
-        // Les offsets relatifs de l'index sont des u32.
+        // The index's relative offsets are u32s.
         let count = active.next_offset() - active.base_offset() + pending.sizes.len() as u64;
         has_records && (would_exceed || count >= u64::from(u32::MAX))
     }
@@ -228,9 +228,9 @@ impl PartitionLog {
         Ok(())
     }
 
-    /// Scelle le segment actif et en ouvre un nouveau.
+    /// Seals the active segment and opens a new one.
     fn roll(&mut self) -> Result<()> {
-        // Un segment scellé n'est plus jamais réparé : il doit être complet sur le disque.
+        // A sealed segment is never repaired again: it must be complete on disk.
         self.active().sync()?;
         let base = self.next_offset();
         let segment = Segment::create(&self.dir, base, self.config.index_interval_bytes)?;
@@ -241,15 +241,15 @@ impl PartitionLog {
     }
 }
 
-/// Enregistrements encodés, pas encore écrits dans le segment actif.
+/// Encoded records, not yet written to the active segment.
 #[derive(Default)]
 struct PendingWrite {
     bytes: Vec<u8>,
     sizes: Vec<usize>,
 }
 
-/// Chaque segment doit s'arrêter exactement là où commence le suivant :
-/// sinon des offsets manquent ou se chevauchent.
+/// Each segment must end exactly where the next one begins:
+/// otherwise offsets are missing or overlap.
 fn check_continuity(dir: &Path, segments: &[Segment]) -> Result<()> {
     for pair in segments.windows(2) {
         let (current, next) = (&pair[0], &pair[1]);
@@ -257,7 +257,7 @@ fn check_continuity(dir: &Path, segments: &[Segment]) -> Result<()> {
             return Err(corrupt(
                 segment_log_path(dir, current.base_offset()),
                 format!(
-                    "le segment se termine à l'offset {} mais le suivant commence à {}",
+                    "segment ends at offset {} but the next one starts at {}",
                     current.next_offset(),
                     next.base_offset()
                 ),

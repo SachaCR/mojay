@@ -1,5 +1,5 @@
-//! `mojay tail` : affiche les messages d'un topic. Lecture seule : aucun
-//! groupe, aucun commit, aucun effet sur les consumers.
+//! `mojay tail`: shows a topic's messages. Read-only: no group,
+//! no commit, no effect on consumers.
 
 use std::io::Write;
 use std::path::Path;
@@ -11,27 +11,27 @@ use mojay::{Error, Record, TopicReader};
 use super::{CliError, CliResult, open_existing};
 use crate::display;
 
-/// Attente entre deux vérifications en mode `--follow`.
+/// Delay between two checks in `--follow` mode.
 const FOLLOW_INTERVAL: Duration = Duration::from_millis(100);
 const READ_BATCH_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, clap::Args)]
 pub struct Args {
-    /// Le topic à lire.
+    /// The topic to read.
     pub topic: String,
-    /// Une seule partition. Par défaut, toutes.
+    /// A single partition. Defaults to all.
     #[arg(long, short)]
     pub partition: Option<u32>,
-    /// Commencer à cet offset (avec --partition).
+    /// Start at this offset (with --partition).
     #[arg(long, requires = "partition", conflicts_with = "last")]
     pub offset: Option<u64>,
-    /// Ne montrer que les N derniers messages de chaque partition.
+    /// Show only the last N messages of each partition.
     #[arg(long, short = 'n')]
     pub last: Option<u64>,
-    /// Continuer à afficher les nouveaux messages, jusqu'à Ctrl-C.
+    /// Keep showing new messages until Ctrl-C.
     #[arg(long, short)]
     pub follow: bool,
-    /// Afficher les valeurs en entier, sans les tronquer.
+    /// Show values in full, without truncating them.
     #[arg(long)]
     pub full: bool,
 }
@@ -42,7 +42,7 @@ pub fn run(data: &Path, args: Args, out: &mut impl Write) -> CliResult {
     let partitions: Vec<u32> = match args.partition {
         Some(p) if p >= reader.partitions() => {
             return Err(CliError::Message(format!(
-                "partition {p} inexistante (le topic en a {})",
+                "partition {p} does not exist (the topic has {})",
                 reader.partitions()
             )));
         }
@@ -84,8 +84,8 @@ fn first_position(reader: &TopicReader, partition: u32, args: &Args) -> Result<u
     })
 }
 
-/// Ce qui est lisible à partir de `position`. Si la rétention a supprimé la
-/// position entre-temps, on repart du nouveau début.
+/// What is readable from `position`. If retention has deleted that
+/// position in the meantime, restart from the new beginning.
 fn read_available(
     reader: &mut TopicReader,
     partition: u32,
@@ -103,7 +103,7 @@ fn read_available(
     }
 }
 
-/// `partition:offset  horodatage  key=…  value=…  headers…`
+/// `partition:offset  timestamp  key=…  value=…  headers…`
 fn line(partition: u32, record: &Record, full: bool) -> String {
     let mut line = format!(
         "{partition}:{}  {}  key={}  value={}",

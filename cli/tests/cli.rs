@@ -1,4 +1,4 @@
-//! Tests de la CLI : le vrai binaire `mojay`, lancé sur un dossier temporaire.
+//! CLI tests: the real `mojay` binary, run against a temporary directory.
 
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -11,7 +11,7 @@ use std::time::Duration;
 use mojay::{ConsumerConfig, Db};
 use tempfile::TempDir;
 
-/// Lance `mojay --data <dir> <args>`, avec `stdin` en entrée.
+/// Run `mojay --data <dir> <args>` with `stdin` as input.
 fn mojay(dir: &Path, args: &[&str], stdin: &str) -> Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_mojay"))
         .arg("--data")
@@ -31,7 +31,7 @@ fn mojay(dir: &Path, args: &[&str], stdin: &str) -> Output {
     child.wait_with_output().unwrap()
 }
 
-/// Lance une commande qui doit réussir, et renvoie sa sortie.
+/// Run a command that must succeed, and return its output.
 fn ok(dir: &Path, args: &[&str]) -> String {
     ok_with_input(dir, args, "")
 }
@@ -40,16 +40,19 @@ fn ok_with_input(dir: &Path, args: &[&str], stdin: &str) -> String {
     let output = mojay(dir, args, stdin);
     assert!(
         output.status.success(),
-        "mojay {args:?} a échoué : {}",
+        "mojay {args:?} failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     String::from_utf8(output.stdout).unwrap()
 }
 
-/// Lance une commande qui doit échouer, et renvoie son message d'erreur.
+/// Run a command that must fail, and return its error message.
 fn fails(dir: &Path, args: &[&str]) -> String {
     let output = mojay(dir, args, "");
-    assert!(!output.status.success(), "mojay {args:?} aurait dû échouer");
+    assert!(
+        !output.status.success(),
+        "mojay {args:?} should have failed"
+    );
     String::from_utf8(output.stderr).unwrap()
 }
 
@@ -69,18 +72,18 @@ fn produce_then_tail_shows_every_message() {
     assert_eq!(
         ok(
             dir.path(),
-            &["produce", "orders", "bonjour", "-k", "k1", "-H", "src=web"]
+            &["produce", "orders", "hello", "-k", "k1", "-H", "src=web"]
         ),
         "0:0\n"
     );
-    ok_with_input(dir.path(), &["produce", "orders", "-q"], "deux\ntrois\n");
+    ok_with_input(dir.path(), &["produce", "orders", "-q"], "two\nthree\n");
 
     let tail = ok(dir.path(), &["tail", "orders"]);
     let lines: Vec<_> = tail.lines().collect();
     assert_eq!(lines.len(), 3, "{tail}");
     assert!(lines[0].starts_with("0:0  "));
-    assert!(lines[0].contains("key=\"k1\"  value=\"bonjour\"  src=\"web\""));
-    assert!(lines[2].contains("key=null  value=\"trois\""));
+    assert!(lines[0].contains("key=\"k1\"  value=\"hello\"  src=\"web\""));
+    assert!(lines[2].contains("key=null  value=\"three\""));
 }
 
 #[test]
@@ -120,12 +123,12 @@ fn tail_follow_shows_new_messages_as_they_arrive() {
         }
     });
 
-    ok(dir.path(), &["produce", "orders", "en direct", "-p", "1"]);
+    ok(dir.path(), &["produce", "orders", "live", "-p", "1"]);
     let line = received.recv_timeout(Duration::from_secs(10)).unwrap();
     tail.kill().unwrap();
     tail.wait().unwrap();
     assert!(
-        line.starts_with("1:0  ") && line.contains("\"en direct\""),
+        line.starts_with("1:0  ") && line.contains("\"live\""),
         "{line}"
     );
 }
@@ -151,11 +154,11 @@ fn describe_shows_partitions_and_group_lag() {
 
     let describe = ok(dir.path(), &["describe", "orders"]);
     assert!(describe.contains("partitions  2"), "{describe}");
-    assert!(describe.contains("rétention   aucune"), "{describe}");
+    assert!(describe.contains("retention   none"), "{describe}");
     let partition_1 = describe.lines().find(|l| l.starts_with("1 ")).unwrap();
     let columns: Vec<_> = partition_1.split_whitespace().collect();
     assert_eq!(&columns[..4], ["1", "0", "4", "4"], "{partition_1}");
-    // Le consumer a commité ses deux partitions : la 0, vide, et la 1.
+    // The consumer committed both of its partitions: 0 (empty) and 1.
     let groups: Vec<Vec<&str>> = describe
         .lines()
         .filter(|l| l.starts_with("billing"))
@@ -164,7 +167,7 @@ fn describe_shows_partitions_and_group_lag() {
     assert_eq!(
         groups,
         [["billing", "0", "0", "0"], ["billing", "1", "3", "1"]],
-        "groupe, partition, commité, retard"
+        "group, partition, committed, lag"
     );
 }
 
@@ -174,16 +177,16 @@ fn dump_shows_records_and_reports_damage_without_repairing() {
     ok_with_input(
         dir.path(),
         &["produce", "orders", "-q"],
-        "un\ndeux\ntrois\n",
+        "one\ntwo\nthree\n",
     );
 
     let dump = ok(dir.path(), &["dump", "orders", "--index"]);
-    assert!(dump.contains("en-tête valide, format v1"), "{dump}");
-    assert!(dump.contains("3 enregistrement(s) lisible(s)"), "{dump}");
-    assert!(dump.contains("value=\"deux\""), "{dump}");
+    assert!(dump.contains("valid header, format v1"), "{dump}");
+    assert!(dump.contains("3 readable record(s)"), "{dump}");
+    assert!(dump.contains("value=\"two\""), "{dump}");
     assert!(!dump.contains("!!"), "{dump}");
 
-    // On abîme le dernier enregistrement : le dump le signale, sans rien réparer.
+    // Corrupt the last record: the dump reports it without repairing anything.
     let segment = first_segment(dir.path());
     let mut bytes = fs::read(&segment).unwrap();
     let last = bytes.len() - 3;
@@ -191,42 +194,44 @@ fn dump_shows_records_and_reports_damage_without_repairing() {
     fs::write(&segment, &bytes).unwrap();
 
     let dump = ok(dir.path(), &["dump", segment.to_str().unwrap()]);
-    assert!(dump.contains("2 enregistrement(s) lisible(s)"), "{dump}");
-    assert!(dump.contains("!! fin illisible"), "{dump}");
-    assert!(dump.contains("CRC invalide"), "{dump}");
+    assert!(dump.contains("2 readable record(s)"), "{dump}");
+    assert!(dump.contains("!! unreadable tail"), "{dump}");
+    assert!(dump.contains("invalid CRC"), "{dump}");
     assert_eq!(
         fs::read(&segment).unwrap(),
         bytes,
-        "le fichier n'est pas modifié"
+        "the file is not modified"
     );
 }
 
 #[test]
 fn errors_are_explained_and_exit_with_failure() {
     let dir = data_with_topic("1");
-    assert!(fails(dir.path(), &["tail", "missing"]).contains("n'existe pas"));
-    assert!(fails(dir.path(), &["tail", "orders", "-p", "4"]).contains("partition 4 inexistante"));
-    assert!(fails(dir.path(), &["create-topic", "orders"]).contains("existe déjà"));
+    assert!(fails(dir.path(), &["tail", "missing"]).contains("does not exist"));
     assert!(
-        fails(dir.path(), &["create-topic", "x", "--fsync", "parfois"]).contains("always, never")
+        fails(dir.path(), &["tail", "orders", "-p", "4"]).contains("partition 4 does not exist")
+    );
+    assert!(fails(dir.path(), &["create-topic", "orders"]).contains("already exists"));
+    assert!(
+        fails(dir.path(), &["create-topic", "x", "--fsync", "sometimes"]).contains("always, never")
     );
 
     let elsewhere = TempDir::new().unwrap();
     let message = fails(elsewhere.path(), &["topics"]);
     assert!(
-        message.contains("n'est pas un dossier de données Mojay"),
+        message.contains("is not a Mojay data directory"),
         "{message}"
     );
     assert_eq!(
         fs::read_dir(elsewhere.path()).unwrap().count(),
         0,
-        "rien n'est créé"
+        "nothing is created"
     );
 
-    // Un producteur déjà ouvert : la CLI ne peut pas écrire en même temps.
+    // A producer is already open: the CLI cannot write at the same time.
     let db = Db::open(dir.path()).unwrap();
     let _writer = db.producer("orders").unwrap();
-    assert!(fails(dir.path(), &["produce", "orders", "x"]).contains("a déjà un writer"));
+    assert!(fails(dir.path(), &["produce", "orders", "x"]).contains("already has a writer"));
 }
 
 #[test]
@@ -238,23 +243,20 @@ fn create_topic_accepts_human_units() {
             "create-topic",
             "events",
             "--segment-size",
-            "8Mio",
+            "8MiB",
             "--fsync",
             "250ms",
             "--retention-size",
-            "1Gio",
+            "1GiB",
             "--retention-time",
             "7d",
         ],
     );
     let describe = ok(dir.path(), &["describe", "events"]);
-    assert!(describe.contains("segments    8 Mio au plus"), "{describe}");
+    assert!(describe.contains("segments    8 MiB max"), "{describe}");
+    assert!(describe.contains("fsync       every 250ms"), "{describe}");
     assert!(
-        describe.contains("fsync       toutes les 250 ms"),
-        "{describe}"
-    );
-    assert!(
-        describe.contains("1 Gio par partition, 7 j par segment"),
+        describe.contains("1 GiB per partition, 7d per segment"),
         "{describe}"
     );
 }

@@ -1,14 +1,14 @@
-//! Limites de lecture partagées entre processus.
+//! Read limits shared between processes.
 //!
-//! Le fichier `read_limits` d'un topic contient un `u64` par partition : le
-//! premier offset que les lecteurs n'ont pas encore le droit de lire. Le writer
-//! le publie après chaque ajout ; les lecteurs ne lisent jamais au-delà.
+//! A topic's `read_limits` file holds one `u64` per partition: the
+//! first offset that readers are not yet allowed to read. The writer
+//! publishes it after each append; readers never read beyond it.
 //!
-//! Le fichier est mappé en mémoire (`mmap` partagé) par tous les processus :
-//! publier ou lire une limite est une simple opération atomique en mémoire,
-//! sans appel système.
+//! The file is memory-mapped (shared `mmap`) by every process:
+//! publishing or reading a limit is a simple atomic operation in memory,
+//! with no system call.
 //!
-//! C'est le seul module où `unsafe` est autorisé (voir AGENT.md).
+//! This is the only module where `unsafe` is allowed (see AGENT.md).
 
 use std::fs::{File, OpenOptions};
 use std::io::Write;
@@ -21,7 +21,7 @@ use crate::error::{Error, Result, corrupt};
 
 const SLOT_SIZE: usize = std::mem::size_of::<u64>();
 
-/// Crée le fichier de `partitions` limites, toutes à zéro.
+/// Creates the file with `partitions` limits, all set to zero.
 pub(crate) fn create(path: &Path, partitions: u32) -> Result<()> {
     let mut file = File::create_new(path)?;
     file.write_all(&vec![0u8; partitions as usize * SLOT_SIZE])?;
@@ -29,8 +29,8 @@ pub(crate) fn create(path: &Path, partitions: u32) -> Result<()> {
     Ok(())
 }
 
-/// Le fichier mappé. Toujours en lecture-écriture, même pour un lecteur :
-/// une référence atomique exige une mémoire inscriptible (voir `slot`).
+/// The mapped file. Always read-write, even for a reader:
+/// an atomic reference requires writable memory (see `slot`).
 #[derive(Debug)]
 struct Mapping {
     map: MmapRaw,
@@ -45,7 +45,7 @@ impl Mapping {
         if partitions == 0 || len != expected as u64 {
             return Err(corrupt(
                 path,
-                format!("{len} octets, {expected} attendus pour {partitions} partitions"),
+                format!("{len} bytes, expected {expected} for {partitions} partitions"),
             ));
         }
         let map = MmapOptions::new().len(expected).map_raw(&file)?;
@@ -61,21 +61,21 @@ impl Mapping {
         }
         let ptr = self.map.as_mut_ptr().cast::<u64>();
         // SAFETY:
-        // - Alignement : un mapping commence sur une frontière de page, et chaque
-        //   case est à un multiple de 8 octets du début.
-        // - Bornes : `partition < partitions`, et le mapping fait exactement
-        //   `partitions * 8` octets (vérifié à l'ouverture).
-        // - Durée de vie : la référence emprunte `self`, donc le mapping vit au
-        //   moins aussi longtemps qu'elle.
-        // - Mémoire inscriptible : le mapping est toujours en lecture-écriture.
-        // - Accès concurrents : dans tous les processus, ces octets ne sont lus
-        //   et écrits qu'à travers des `AtomicU64` (ce module), jamais par
-        //   `read`/`write` une fois le fichier créé.
+        // - Alignment: a mapping starts on a page boundary, and each
+        //   slot is at a multiple of 8 bytes from the start.
+        // - Bounds: `partition < partitions`, and the mapping is exactly
+        //   `partitions * 8` bytes (checked when opening).
+        // - Lifetime: the reference borrows `self`, so the mapping lives at
+        //   least as long as it does.
+        // - Writable memory: the mapping is always read-write.
+        // - Concurrent access: in every process, these bytes are only read
+        //   and written through `AtomicU64`s (this module), never through
+        //   `read`/`write` once the file has been created.
         Ok(unsafe { AtomicU64::from_ptr(ptr.add(partition as usize)) })
     }
 }
 
-/// Vue lecteur : lit les limites publiées par le writer.
+/// Reader view: reads the limits published by the writer.
 #[derive(Debug)]
 pub(crate) struct ReadLimits(Mapping);
 
@@ -84,15 +84,15 @@ impl ReadLimits {
         Mapping::open(path, partitions).map(Self)
     }
 
-    /// Limite de lecture de `partition`. L'ordre *Acquire* garantit que les
-    /// données écrites avant la publication sont visibles après cette lecture.
+    /// Read limit of `partition`. The *Acquire* ordering guarantees that
+    /// data written before publication is visible after this read.
     pub(crate) fn get(&self, partition: u32) -> Result<u64> {
         Ok(self.0.slot(partition)?.load(Ordering::Acquire))
     }
 }
 
-/// Vue writer : publie les limites. Une seule doit exister par topic, ce que
-/// garantit le verrou du writer.
+/// Writer view: publishes the limits. Only one may exist per topic, which
+/// the writer lock guarantees.
 #[derive(Debug)]
 pub(crate) struct ReadLimitsWriter(Mapping);
 
@@ -101,9 +101,9 @@ impl ReadLimitsWriter {
         Mapping::open(path, partitions).map(Self)
     }
 
-    /// Rend lisibles tous les offsets inférieurs à `limit`. L'ordre *Release*
-    /// garantit que les écritures du log faites avant sont visibles de tout
-    /// lecteur qui voit la nouvelle limite.
+    /// Makes every offset below `limit` readable. The *Release* ordering
+    /// guarantees that log writes made before are visible to any
+    /// reader that sees the new limit.
     pub(crate) fn publish(&self, partition: u32, limit: u64) -> Result<()> {
         self.0.slot(partition)?.store(limit, Ordering::Release);
         Ok(())

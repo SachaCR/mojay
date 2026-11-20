@@ -1,4 +1,4 @@
-//! Le côté writer d'un segment : ajout, index, vérification et réparation de la fin.
+//! The writer side of a segment: appending, indexing, checking and repairing the end.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufReader, Read};
@@ -17,9 +17,9 @@ use crate::record::{self, ReadOutcome, Record};
 #[derive(Debug)]
 pub(crate) struct Segment {
     base_offset: u64,
-    /// Offset du prochain enregistrement : la base du segment suivant s'il est scellé.
+    /// Offset of the next record: the base of the next segment if this one is sealed.
     next_offset: u64,
-    /// Nombre d'octets valides du `.log`, en-tête compris.
+    /// Number of valid bytes in the `.log`, header included.
     size: u64,
     log: File,
     index_file: File,
@@ -28,16 +28,16 @@ pub(crate) struct Segment {
     index_policy: IndexPolicy,
 }
 
-/// Où s'arrête un parcours séquentiel du segment.
+/// Where a sequential scan of the segment stops.
 struct ScanEnd {
     position: u64,
     next_offset: u64,
-    /// `None` = fin propre du fichier ; sinon la raison de l'arrêt.
+    /// `None` = clean end of file; otherwise the reason for stopping.
     damage: Option<String>,
 }
 
 impl Segment {
-    /// Crée un segment vide, en écrasant d'éventuels restes.
+    /// Creates an empty segment, overwriting any leftovers.
     pub(crate) fn create(dir: &Path, base_offset: u64, index_interval: u64) -> Result<Self> {
         let log_path = log_path(dir, base_offset);
         let log = open_rw(&log_path, true)?;
@@ -55,13 +55,13 @@ impl Segment {
         })
     }
 
-    /// Ouvre un segment existant et vérifie sa fin, depuis la dernière entrée
-    /// d'index valide. L'index est complété ou reconstruit au besoin.
+    /// Opens an existing segment and checks its end, from the last valid
+    /// index entry. The index is completed or rebuilt if needed.
     ///
-    /// Le segment actif (`is_active`) est réparé : on garde le plus long
-    /// préfixe d'enregistrements valides et on tronque le reste, qui provient
-    /// d'une écriture interrompue. Un segment scellé n'est jamais tronqué :
-    /// une anomalie y est une vraie corruption, signalée comme telle.
+    /// The active segment (`is_active`) is repaired: the longest prefix
+    /// of valid records is kept and the rest, which comes from an interrupted
+    /// write, is truncated. A sealed segment is never truncated:
+    /// an anomaly there is real corruption, reported as such.
     pub(crate) fn open(
         dir: &Path,
         base_offset: u64,
@@ -74,11 +74,11 @@ impl Segment {
 
         if len < HEADER_SIZE {
             if is_active {
-                // Crash entre la création du fichier et l'écriture de l'en-tête.
+                // Crash between creating the file and writing the header.
                 drop(log);
                 return Self::create(dir, base_offset, index_interval);
             }
-            return Err(corrupt(&log_path, "segment scellé sans en-tête"));
+            return Err(corrupt(&log_path, "sealed segment without a header"));
         }
         check_header(&log, &log_path)?;
 
@@ -113,12 +113,12 @@ impl Segment {
         self.size == HEADER_SIZE
     }
 
-    /// Ajoute des enregistrements déjà encodés, à la suite.
-    /// `sizes` donne la taille de chacun, dans l'ordre ; leurs offsets
-    /// partent de `next_offset`.
+    /// Appends already-encoded records, one after another.
+    /// `sizes` gives the size of each one, in order; their offsets
+    /// start at `next_offset`.
     ///
-    /// Le log est écrit avant l'index : une entrée d'index ne pointe jamais
-    /// sur un enregistrement pas encore écrit.
+    /// The log is written before the index: an index entry never points
+    /// to a record that has not been written yet.
     pub(crate) fn append(&mut self, bytes: &[u8], sizes: &[usize]) -> Result<()> {
         debug_assert_eq!(sizes.iter().sum::<usize>(), bytes.len());
         self.log.write_all_at(bytes, self.size)?;
@@ -145,14 +145,14 @@ impl Segment {
         Ok(())
     }
 
-    /// Date de la dernière écriture dans le `.log`.
+    /// Time of the last write to the `.log`.
     pub(crate) fn last_write(&self) -> Result<SystemTime> {
         Ok(self.log.metadata()?.modified()?)
     }
 
-    /// Supprime le segment du disque : le `.log` d'abord, puis l'index. Un
-    /// crash entre les deux laisse un index orphelin, ignoré puis nettoyé à
-    /// la prochaine ouverture ; jamais un log sans son début.
+    /// Deletes the segment from disk: the `.log` first, then the index. A
+    /// crash between the two leaves an orphan index, ignored then cleaned up on
+    /// the next open; never a log without its beginning.
     pub(crate) fn delete(self) -> Result<()> {
         let index_path = self.log_path.with_extension("idx");
         fs::remove_file(&self.log_path)?;
@@ -163,7 +163,7 @@ impl Segment {
         }
     }
 
-    /// Force l'écriture du log et de l'index sur le disque.
+    /// Forces the log and the index to disk.
     pub(crate) fn sync(&self) -> Result<()> {
         self.log.sync_data()?;
         self.index_file.sync_data()?;
@@ -178,11 +178,11 @@ impl Segment {
         read_records(&self.log, &self.log_path, start, self.size, req, out)
     }
 
-    /// Vérifie la fin du segment, la répare s'il est actif, et remet l'index
-    /// en accord avec le log.
+    /// Checks the end of the segment, repairs it if active, and brings the index
+    /// in line with the log.
     ///
-    /// Le parcours part de la dernière entrée d'index valide : il ne lit en
-    /// général que quelques Kio, et tout le segment si l'index est absent.
+    /// The scan starts from the last valid index entry: it usually only reads
+    /// a few KiB, and the whole segment if the index is missing.
     fn check_tail(&mut self, is_active: bool) -> Result<()> {
         let mut raw = Vec::new();
         (&self.index_file).read_to_end(&mut raw)?;
@@ -190,9 +190,9 @@ impl Segment {
         self.index = parsed.index;
         let loaded_entries = self.index.len();
 
-        // Les entrées d'index ont pu survivre à des enregistrements perdus
-        // (fichiers différents, aucun ordre garanti sur le disque) : on recule
-        // jusqu'à une entrée qui pointe bien sur l'enregistrement attendu.
+        // Index entries may have survived lost records
+        // (different files, no ordering guaranteed on disk): step back
+        // to an entry that really points to the expected record.
         while let Some(entry) = self.index.last() {
             if self.entry_is_valid(entry)? {
                 break;
@@ -209,7 +209,7 @@ impl Segment {
             if !is_active {
                 return Err(corrupt(&self.log_path, reason));
             }
-            // Fin d'une écriture interrompue : on la retire.
+            // End of an interrupted write: remove it.
             self.log.set_len(end.position)?;
             self.log.sync_data()?;
             self.size = end.position;
@@ -234,10 +234,10 @@ impl Segment {
         })
     }
 
-    /// Parcourt le log depuis `start` (où doit se trouver `start_offset`),
-    /// complète l'index en mémoire au fil de l'eau, et renvoie où le parcours
-    /// s'est arrêté. L'entrée d'index qui pointe sur `start`, s'il y en a une,
-    /// doit déjà être dans l'index.
+    /// Scans the log from `start` (where `start_offset` must be),
+    /// fills in the in-memory index along the way, and returns where the scan
+    /// stopped. The index entry pointing to `start`, if there is one,
+    /// must already be in the index.
     fn rebuild_from(&mut self, start: u64, start_offset: u64) -> Result<ScanEnd> {
         let mut reader = BufReader::with_capacity(
             READ_BUFFER_SIZE,
@@ -258,12 +258,12 @@ impl Segment {
                 ReadOutcome::Record(rec, size) => {
                     if rec.offset != expected {
                         break Some(format!(
-                            "offset {} trouvé à la position {position}, {expected} attendu",
+                            "offset {} found at position {position}, expected {expected}",
                             rec.offset
                         ));
                     }
                     let entry = policy.observe(rec.offset, position, size);
-                    // L'enregistrement de départ a déjà son entrée, si besoin.
+                    // The starting record already has its entry, if needed.
                     if let Some(entry) = entry.filter(|_| position != start) {
                         new_entries.push(entry);
                     }
@@ -272,10 +272,10 @@ impl Segment {
                 }
                 ReadOutcome::End => break None,
                 ReadOutcome::Incomplete => {
-                    break Some(format!("enregistrement incomplet à la position {position}"));
+                    break Some(format!("incomplete record at position {position}"));
                 }
                 ReadOutcome::Corrupt(reason) => {
-                    break Some(format!("{reason} à la position {position}"));
+                    break Some(format!("{reason} at position {position}"));
                 }
             }
         };

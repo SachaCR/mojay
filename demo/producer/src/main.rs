@@ -1,5 +1,5 @@
-//! Démo Mojay : publie des événements JSON dans un topic de 3 partitions,
-//! jusqu'à Ctrl-C. À lancer avant un ou plusieurs `mojay-demo-consumer`.
+//! Mojay demo: publishes JSON events to a 3-partition topic until Ctrl-C.
+//! Start it before one or more `mojay-demo-consumer`.
 
 mod event;
 
@@ -17,23 +17,23 @@ use mojay::{Db, Error, FsyncPolicy, LogConfig, Message, Retention, TopicConfig};
 use event::EventGenerator;
 
 const PARTITIONS: u32 = 3;
-/// Le topic entier ne dépasse pas environ 500 Mio : la limite s'applique par partition.
+/// The whole topic stays under about 500 MiB: the limit applies per partition.
 const TOPIC_RETENTION_BYTES: u64 = 500 * 1024 * 1024;
-/// Des segments assez petits pour que la rétention supprime finement.
+/// Segments small enough for retention to delete at a fine grain.
 const SEGMENT_BYTES: u64 = 16 * 1024 * 1024;
-/// Au-delà de ce débit, un résumé par seconde remplace une ligne par événement.
+/// Above this rate, a summary per second replaces one line per event.
 const MAX_RATE_SHOWN_PER_EVENT: u32 = 50;
 
 #[derive(Debug, Parser)]
-#[command(about = "Publie des événements JSON dans un topic Mojay, jusqu'à Ctrl-C")]
+#[command(about = "Publishes JSON events to a Mojay topic until Ctrl-C")]
 struct Args {
-    /// Le dossier de données, partagé avec les consumers.
+    /// The data directory, shared with the consumers.
     #[arg(long, short, default_value = "./demo-data")]
     data: PathBuf,
-    /// Le topic, créé au besoin avec 3 partitions.
+    /// The topic, created with 3 partitions if needed.
     #[arg(long, short, default_value = "demo-events")]
     topic: String,
-    /// Nombre d'événements par seconde.
+    /// Number of events per second.
     #[arg(long, short, default_value_t = 5)]
     rate: u32,
 }
@@ -42,7 +42,7 @@ fn main() -> ExitCode {
     match run(Args::parse()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("erreur : {error}");
+            eprintln!("error: {error}");
             ExitCode::FAILURE
         }
     }
@@ -58,7 +58,7 @@ fn run(args: Args) -> Result<(), Box<dyn StdError>> {
     ctrlc::set_handler(move || stop.store(false, Ordering::SeqCst))?;
 
     println!(
-        "Publication dans « {} » ({}), {} événements/s. Ctrl-C pour arrêter.",
+        "Publishing to \"{}\" ({}), {} events/s. Ctrl-C to stop.",
         args.topic,
         args.data.display(),
         args.rate
@@ -72,7 +72,7 @@ fn run(args: Args) -> Result<(), Box<dyn StdError>> {
 
     while running.load(Ordering::SeqCst) {
         let event = events.next_event(now_millis());
-        // La clé est le client : ses événements restent dans une partition, dans l'ordre.
+        // The key is the customer: their events stay in one partition, in order.
         let message =
             Message::new(event.customer.clone(), event.to_json()).header("type", event.kind);
         let (partition, offset) = producer.send(&message)?;
@@ -86,7 +86,7 @@ fn run(args: Args) -> Result<(), Box<dyn StdError>> {
                 euros(event.amount_cents)
             );
         } else if last_summary.elapsed() >= Duration::from_secs(1) {
-            println!("{sent} événements envoyés");
+            println!("{sent} events sent");
             last_summary = Instant::now();
         }
 
@@ -97,17 +97,17 @@ fn run(args: Args) -> Result<(), Box<dyn StdError>> {
     }
 
     producer.flush()?;
-    println!("\n{sent} événements envoyés. Au revoir.");
+    println!("\n{sent} events sent. Goodbye.");
     Ok(())
 }
 
-/// Crée le topic de la démo. S'il existe déjà, on le réutilise tel quel.
+/// Creates the demo topic. If it already exists, it is reused as is.
 fn create_topic_if_missing(db: &Db, topic: &str) -> Result<(), Error> {
     let config = TopicConfig {
         partitions: PARTITIONS,
         log: LogConfig {
             segment_max_bytes: SEGMENT_BYTES,
-            // Un fsync toutes les 100 ms suffit pour une démo, et permet des débits élevés.
+            // An fsync every 100 ms is enough for a demo, and allows high rates.
             fsync: FsyncPolicy::Interval(Duration::from_millis(100)),
             retention: Retention {
                 max_bytes: Some(TOPIC_RETENTION_BYTES / u64::from(PARTITIONS)),
@@ -118,7 +118,7 @@ fn create_topic_if_missing(db: &Db, topic: &str) -> Result<(), Error> {
     };
     match db.create_topic(topic, config) {
         Ok(()) => {
-            println!("Topic « {topic} » créé : {PARTITIONS} partitions, 500 Mio au plus.");
+            println!("Topic \"{topic}\" created: {PARTITIONS} partitions, 500 MiB max.");
             Ok(())
         }
         Err(Error::TopicExists(_)) => Ok(()),
@@ -127,7 +127,7 @@ fn create_topic_if_missing(db: &Db, topic: &str) -> Result<(), Error> {
 }
 
 fn euros(cents: u64) -> String {
-    format!("{},{:02} €", cents / 100, cents % 100)
+    format!("€{}.{:02}", cents / 100, cents % 100)
 }
 
 fn now_millis() -> u64 {

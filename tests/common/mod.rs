@@ -1,8 +1,8 @@
-//! Outils partagés par les tests d'intégration.
+//! Helpers shared by the integration tests.
 //!
-//! Les tests multi-processus relancent leur propre binaire de test dans un
-//! processus enfant : le test `child_process` de chaque fichier lit le scénario
-//! à jouer dans l'environnement (voir [`child_scenario`]).
+//! Multi-process tests rerun their own test binary in a child process:
+//! each file's `child_process` test reads the scenario to play from the
+//! environment (see [`child_scenario`]).
 
 use std::env;
 use std::path::Path;
@@ -17,9 +17,9 @@ pub const ALL: usize = usize::MAX;
 const CHILD_SCENARIO: &str = "MOJAY_TEST_CHILD_SCENARIO";
 const CHILD_DIR: &str = "MOJAY_TEST_CHILD_DIR";
 
-/// Le message d'indice `i`, reconnaissable à la relecture.
+/// The message at index `i`, recognizable when read back.
 pub fn message(i: u64) -> Message {
-    Message::new(format!("k{i}"), format!("valeur-{i}-{}", "x".repeat(64)))
+    Message::new(format!("k{i}"), format!("value-{i}-{}", "x".repeat(64)))
 }
 
 pub fn config(partitions: u32, segment_max_bytes: u64, fsync: FsyncPolicy) -> TopicConfig {
@@ -40,17 +40,17 @@ pub fn new_db() -> (TempDir, Db) {
     (dir, db)
 }
 
-/// Attend qu'une condition devienne vraie, ou échoue après `timeout`.
+/// Wait for a condition to become true, or fail after `timeout`.
 pub fn wait_until(timeout: Duration, mut condition: impl FnMut() -> bool) {
     let deadline = Instant::now() + timeout;
     while !condition() {
-        assert!(Instant::now() < deadline, "délai dépassé");
+        assert!(Instant::now() < deadline, "timed out");
         thread::sleep(Duration::from_millis(5));
     }
 }
 
-/// Dans un processus enfant : le scénario à jouer et le dossier de données.
-/// `None` dans un test normal.
+/// In a child process: the scenario to play and the data directory.
+/// `None` in a normal test run.
 pub fn child_scenario() -> Option<(String, Db)> {
     let scenario = env::var(CHILD_SCENARIO).ok()?;
     let db = Db::open(env::var(CHILD_DIR).unwrap()).unwrap();
@@ -72,25 +72,25 @@ fn child_command(scenario: &str, dir: &Path) -> Command {
     cmd
 }
 
-/// Lance un scénario enfant, attend sa fin, et renvoie ce qu'il a écrit après `RESULT:`.
+/// Run a child scenario, wait for it to finish, and return what it wrote after `RESULT:`.
 pub fn run_child(scenario: &str, dir: &Path) -> String {
     let output = child_command(scenario, dir).output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         output.status.success(),
-        "l'enfant « {scenario} » a échoué :\n{stdout}\n{}",
+        "child \"{scenario}\" failed:\n{stdout}\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    // La sortie du harnais de test peut précéder le résultat sur la même ligne.
+    // The test harness output may precede the result on the same line.
     stdout
         .split("RESULT:")
         .nth(1)
         .and_then(|rest| rest.split_whitespace().next())
-        .unwrap_or_else(|| panic!("pas de résultat dans :\n{stdout}"))
+        .unwrap_or_else(|| panic!("no result in:\n{stdout}"))
         .to_string()
 }
 
-/// Lance un scénario enfant en arrière-plan.
+/// Run a child scenario in the background.
 pub fn spawn_child(scenario: &str, dir: &Path) -> Child {
     child_command(scenario, dir).spawn().unwrap()
 }

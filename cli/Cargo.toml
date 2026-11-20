@@ -2,12 +2,12 @@
 name = "mojay-cli"
 version = "0.1.0"
 edition = "2024"
-description = "Outil en ligne de commande pour inspecter et manipuler un dossier de données Mojay"
+description = "Command-line tool to inspect and manipulate a Mojay data folder"
 
 [[bin]]
 name = "mojay"
 path = "src/main.rs"
-# Même nom que la bibliothèque : seule elle est documentée.
+# Same name as the library: only the library is documented.
 doc = false
 
 [dependencies]

@@ -1,222 +1,219 @@
-# `mojay` : la ligne de commande de Mojay
+# `mojay`: the Mojay command line
 
-`mojay` sert à créer des topics, envoyer et lire des messages, et regarder ce
-qui est réellement stocké dans un dossier de données Mojay. C'est l'outil de
-débogage et d'exploration : votre application, elle, utilise la bibliothèque.
+`mojay` creates topics, sends and reads messages, and shows what is actually
+stored in a Mojay data folder. It is the tool for debugging and exploring;
+your application itself uses the library.
 
 ```bash
 mojay create-topic orders --partitions 3
-echo '{"commande": 1}' | mojay produce orders --key client-42
+echo '{"order": 1}' | mojay produce orders --key client-42
 mojay tail orders --follow
 ```
 
 ## Installation
 
-Depuis la racine du dépôt :
+From the repository root:
 
 ```bash
 cargo install --path cli
 ```
 
-Le binaire `mojay` est alors dans `~/.cargo/bin`. Sans l'installer, on peut
-aussi le lancer avec `cargo run -p mojay-cli -- <commande>`.
+The `mojay` binary is then in `~/.cargo/bin`. Without installing it, you can
+also run it with `cargo run -p mojay-cli -- <command>`.
 
-## Le dossier de données
+## The data folder
 
-Toutes les commandes travaillent sur un dossier de données. On le choisit, par
-ordre de priorité, avec :
+Every command works on a data folder, chosen in this order of priority:
 
-1. l'option `--data <dossier>` (ou `-d`), placée avant ou après la commande ;
-2. la variable d'environnement `MOJAY_DATA` ;
-3. par défaut, `./data`.
+1. the `--data <folder>` option (or `-d`), placed before or after the command;
+2. the `MOJAY_DATA` environment variable;
+3. by default, `./data`.
 
-Seule `create-topic` crée le dossier s'il n'existe pas. Les autres commandes
-refusent un dossier qui n'est pas un dossier Mojay : une faute de frappe ne
-crée jamais un dossier vide ailleurs.
+Only `create-topic` creates the folder if it does not exist. The other commands
+refuse a folder that is not a Mojay folder, so a typo never creates an empty
+folder somewhere else.
 
 ```console
-$ mojay -d ailleurs topics
-erreur : ailleurs n'est pas un dossier de données Mojay (option --data ou variable MOJAY_DATA)
+$ mojay -d elsewhere topics
+error: elsewhere is not a Mojay data directory (use --data or MOJAY_DATA)
 ```
 
-## Commandes
+## Commands
 
-| Commande | Rôle | Modifie les données ? |
+| Command | Purpose | Changes data? |
 | --- | --- | --- |
-| [`create-topic`](#create-topic) | Crée un topic | Oui |
-| [`topics`](#topics) | Liste les topics | Non |
-| [`describe`](#describe) | Configuration, partitions, segments, retard des groupes | Non |
-| [`produce`](#produce) | Envoie des messages | Oui |
-| [`tail`](#tail) | Affiche les messages | Non |
-| [`dump`](#dump) | Affiche le contenu brut d'un segment | Non |
+| [`create-topic`](#create-topic) | Creates a topic | Yes |
+| [`topics`](#topics) | Lists the topics | No |
+| [`describe`](#describe) | Configuration, partitions, segments, group lag | No |
+| [`produce`](#produce) | Sends messages | Yes |
+| [`tail`](#tail) | Shows messages | No |
+| [`dump`](#dump) | Shows the raw content of a segment | No |
 
-`mojay --help` et `mojay <commande> --help` donnent la liste complète des options.
+`mojay --help` and `mojay <command> --help` list every option.
 
 ### `create-topic`
 
 ```bash
-mojay create-topic <nom> [options]
+mojay create-topic <name> [options]
 ```
 
-| Option | Défaut | Effet |
+| Option | Default | Effect |
 | --- | --- | --- |
-| `-p`, `--partitions <n>` | `1` | Nombre de partitions. Fixe : en ajouter changerait la partition de chaque clé. |
-| `--segment-size <taille>` | `64Mio` | Taille d'un segment avant de passer au suivant. |
-| `--fsync <politique>` | `always` | `always` (chaque message est sur le disque avant d'être lisible), `never` (laissé à l'OS), ou un intervalle comme `100ms`. |
-| `--retention-size <taille>` | aucune | Taille maximale d'**une partition** ; au-delà, les plus vieux segments sont supprimés. |
-| `--retention-time <durée>` | aucune | Âge maximal d'un segment, depuis sa dernière écriture. |
+| `-p`, `--partitions <n>` | `1` | Number of partitions. Fixed: adding some would change the partition of every key. |
+| `--segment-size <size>` | `64MiB` | Size of a segment before moving to the next one. |
+| `--fsync <policy>` | `always` | `always` (each message is on disk before it becomes readable), `never` (left to the OS), or an interval such as `100ms`. |
+| `--retention-size <size>` | none | Maximum size of **one partition**; beyond it, the oldest segments are deleted. |
+| `--retention-time <duration>` | none | Maximum age of a segment, since its last write. |
 
-Le nom accepte lettres, chiffres, `.`, `_` et `-`. La configuration est fixée à
-la création.
+Names accept letters, digits, `.`, `_` and `-`. The configuration is fixed at
+creation.
 
 ```console
-$ mojay create-topic events -p 4 --fsync 100ms --retention-size 10Gio --retention-time 7d
-topic « events » créé (4 partitions)
+$ mojay create-topic events -p 4 --fsync 100ms --retention-size 10GiB --retention-time 7d
+topic "events" created (4 partitions)
 ```
 
 ### `topics`
 
-Liste les topics, un par ligne, triés par nom.
+Lists the topics, one per line, sorted by name.
 
 ### `describe`
 
-Montre la configuration d'un topic, l'état de chaque partition et le retard de
-chaque groupe de consumers. C'est la commande à garder sous la main pendant
-qu'une application tourne.
+Shows a topic's configuration, the state of each partition, and the lag of each
+consumer group. It is the command to keep at hand while an application runs.
 
 ```console
 $ mojay describe orders
 topic       orders
 partitions  3
-segments    64 Mio au plus
+segments    64 MiB max
 fsync       always
-rétention   7 j par segment
+retention   7d per segment
 
-partition         début       limite     messages  segments       taille
-0                     0            2            2         1        132 o
-1                     0            2            2         1        105 o
-2                     0            1            1         1         61 o
+partition         start   read limit     messages  segments         size
+0                     0            2            2         1        127 B
+1                     0            2            2         1         98 B
+2                     0            1            1         1         56 B
 
-groupe               partition       commité       retard
+group                partition     committed          lag
 billing              0                     2            0
 billing              1                     1            1
 billing              2                     1            0
 ```
 
-Ici, le groupe `billing` a tout lu, puis un nouveau message est arrivé sur la
-partition 1 : il a un message de retard.
+Here, the `billing` group read everything, then a new message arrived on
+partition 1: the group is one message behind.
 
-- **début** : le premier offset disponible ; il avance quand la rétention supprime des segments.
-- **limite** : le premier offset pas encore lisible ; on peut lire `début..limite`.
-- **retard** : les messages que le groupe n'a pas encore commités sur cette partition.
+- **start**: the first available offset; it moves forward when retention deletes segments.
+- **read limit**: the first offset not yet readable; you can read `start..read limit`.
+- **lag**: the messages the group has not committed yet on that partition.
 
 ### `produce`
 
-Envoie un message avec la valeur donnée, ou, sans valeur, **une ligne de
-l'entrée standard par message**. Affiche `partition:offset` pour chaque message.
+Sends one message with the given value or, without a value, **one message per
+line of standard input**. Prints `partition:offset` for each message.
 
 ```bash
-mojay produce <topic> [valeur] [options]
+mojay produce <topic> [value] [options]
 ```
 
-| Option | Effet |
+| Option | Effect |
 | --- | --- |
-| `-k`, `--key <clé>` | Clé du message. Elle choisit la partition (murmur2, comme Kafka) : les messages de même clé restent ensemble, dans l'ordre. |
-| `-p`, `--partition <n>` | Partition imposée. Sans clé ni partition, les messages sont répartis en round-robin. |
-| `-H`, `--header <clé=valeur>` | Un header. Répétable. |
-| `-q`, `--quiet` | N'affiche rien. |
+| `-k`, `--key <key>` | Message key. It picks the partition (murmur2, like Kafka): messages with the same key stay together, in order. |
+| `-p`, `--partition <n>` | Forced partition. With neither key nor partition, messages are spread round-robin. |
+| `-H`, `--header <key=value>` | A header. Repeatable. |
+| `-q`, `--quiet` | Prints nothing. |
 
 ```console
-$ mojay produce orders '{"commande": 1}' -k client-42 -H source=web
+$ mojay produce orders '{"order": 1}' -k client-42 -H source=web
 0:0
-$ printf 'premier\ndeuxième\ntroisième\n' | mojay produce orders
+$ printf 'first\nsecond\nthird\n' | mojay produce orders
 0:1
 1:0
 2:0
 ```
 
-Un topic n'a qu'un seul writer à la fois : si une application y écrit déjà,
-`produce` échoue avec « le topic a déjà un writer ».
+A topic has only one writer at a time: if an application is already writing to
+it, `produce` fails with `topic "orders" already has a writer`.
 
 ### `tail`
 
-Affiche les messages d'un topic. `tail` est un simple lecteur : il ne rejoint
-aucun groupe et ne commite rien, il est donc sans effet sur vos consumers.
+Shows a topic's messages. `tail` is a plain reader: it joins no group and
+commits nothing, so it has no effect on your consumers.
 
 ```bash
 mojay tail <topic> [options]
 ```
 
-| Option | Effet |
+| Option | Effect |
 | --- | --- |
-| `-p`, `--partition <n>` | Une seule partition (par défaut : toutes). |
-| `-n`, `--last <n>` | Seulement les n derniers messages de chaque partition. |
-| `--offset <n>` | Commencer à cet offset (avec `--partition`). |
-| `-f`, `--follow` | Continuer à afficher les nouveaux messages, jusqu'à Ctrl-C. |
-| `--full` | Valeurs complètes (sinon tronquées à 120 caractères). |
+| `-p`, `--partition <n>` | A single partition (default: all). |
+| `-n`, `--last <n>` | Only the last n messages of each partition. |
+| `--offset <n>` | Start at this offset (with `--partition`). |
+| `-f`, `--follow` | Keep showing new messages, until Ctrl-C. |
+| `--full` | Full values (otherwise cut at 120 characters). |
 
-Chaque ligne donne `partition:offset`, l'horodatage UTC, la clé, la valeur et
-les headers :
+Each line gives `partition:offset`, the UTC timestamp, the key, the value and
+the headers:
 
 ```console
 $ mojay tail orders
-0:0  2026-11-20T13:06:31.884Z  key="client-42"  value="{\"commande\": 1}"  source="web"
-0:1  2026-11-20T13:06:31.896Z  key=null  value="premier"
-1:0  2026-11-20T13:06:31.899Z  key=null  value="deuxième"
-2:0  2026-11-20T13:06:31.903Z  key=null  value="troisième"
+0:0  2026-11-20T13:37:52.209Z  key="client-42"  value="{\"order\": 1}"  source="web"
+0:1  2026-11-20T13:37:52.238Z  key=null  value="first"
+1:0  2026-11-20T13:37:52.244Z  key=null  value="second"
+2:0  2026-11-20T13:37:52.252Z  key=null  value="third"
 ```
 
-Le texte s'affiche entre guillemets, avec les caractères spéciaux échappés ; une
-valeur binaire s'affiche en hexadécimal (`0xff0010`) ; une clé ou une valeur
-absente s'affiche `null`.
+Text is shown in quotes, with special characters escaped; a binary value is
+shown in hexadecimal (`0xff0010`); a missing key or value is shown as `null`.
 
 ### `dump`
 
-Affiche le contenu brut des segments, enregistrement par enregistrement : leur
-position dans le fichier, leur offset, leur taille et leur contenu. C'est l'outil
-pour vérifier à l'œil ce qui est stocké, ou comprendre un fichier abîmé.
-`dump` ne répare jamais rien.
+Shows the raw content of segments, record by record: their position in the
+file, their offset, their size and their content. It is the tool to check by
+eye what is stored, or to understand a damaged file. `dump` never repairs
+anything.
 
 ```bash
 mojay dump <topic> [-p <partition>] [--index] [--full]
-mojay dump <fichier.log>
+mojay dump <file.log>
 ```
 
 ```console
 $ mojay dump orders -p 0 --index
-== data/topics/orders/p0/00000000000000000000.log (132 o, base 0)
-en-tête valide, format v1
-  position     offset  taille  horodatage                contenu
-        16          0      74  2026-11-20T13:06:31.884Z  key="client-42" value="{\"commande\": 1}" source="web"
-        90          1      42  2026-11-20T13:06:31.896Z  key=null value="premier"
-2 enregistrement(s) lisible(s)
-index : 0 entrée(s)
+== data/topics/orders/p0/00000000000000000000.log (127 B, base 0)
+valid header, format v1
+  position     offset    size  timestamp                 contents
+        16          0      71  2026-11-20T13:37:52.209Z  key="client-42" value="{\"order\": 1}" source="web"
+        87          1      40  2026-11-20T13:37:52.238Z  key=null value="first"
+2 readable record(s)
+index: 0 entry(ies)
 ```
 
-Sur un fichier abîmé, `dump` montre tout ce qui précède le problème, puis où et
-pourquoi la suite est illisible :
+On a damaged file, `dump` shows everything before the problem, then where and
+why the rest cannot be read:
 
 ```console
 $ mojay dump data/topics/orders/p0/00000000000000000000.log
 …
-1 enregistrement(s) lisible(s)
-!! fin illisible à la position 90 : 42 o (CRC invalide)
+1 readable record(s)
+!! unreadable tail at position 87: 40 B (invalid CRC)
 ```
 
-`--index` affiche aussi les entrées de l'index et signale celles qui sont
-incohérentes (la lecture normale les ignore).
+`--index` also shows the index entries and flags the inconsistent ones (normal
+reads ignore them).
 
-## Unités
+## Units
 
-| Type | Exemples | Unités acceptées |
+| Type | Examples | Accepted units |
 | --- | --- | --- |
-| Taille | `4096`, `512o`, `64Kio`, `16Mio`, `10Gio`, `64MiB` | `o`/`B`, `Kio`/`KiB`/`K`, `Mio`/`MiB`/`M`, `Gio`/`GiB`/`G`, `Tio`/`TiB`/`T`, toujours en base 1024 |
-| Durée | `250ms`, `30s`, `15m`, `12h`, `7d`, `7j` | `ms`, `s`, `m`/`min`, `h`, `d`/`j` ; l'unité est obligatoire |
+| Size | `4096`, `512B`, `64KiB`, `16MiB`, `10GiB` | `B`, `KiB`/`K`, `MiB`/`M`, `GiB`/`G`, `TiB`/`T`, always base 1024 |
+| Duration | `250ms`, `30s`, `15m`, `12h`, `7d` | `ms`, `s`, `m`/`min`, `h`, `d`; the unit is required |
 
-## Codes de sortie
+## Exit codes
 
-| Code | Signification |
+| Code | Meaning |
 | --- | --- |
-| `0` | Succès. Une sortie fermée en cours de route (`mojay tail orders \| head`) compte comme un succès. |
-| `1` | Erreur, expliquée sur la sortie d'erreur (`erreur : …`). |
-| `2` | Arguments invalides : `clap` affiche l'usage de la commande. |
+| `0` | Success. Output closed along the way (`mojay tail orders \| head`) counts as success. |
+| `1` | Error, explained on standard error (`error: …`). |
+| `2` | Invalid arguments: `clap` prints the command's usage. |

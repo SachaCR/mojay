@@ -1,15 +1,15 @@
-//! Mise en forme pour un humain : octets, tailles, durées, dates.
-//! Logique pure.
+//! Human-readable formatting: bytes, sizes, durations, dates.
+//! Pure logic.
 
 use std::time::Duration;
 
 use mojay::Header;
 
-/// Au-delà, une valeur est tronquée (sauf avec `--full`).
+/// Values longer than this are truncated (unless `--full` is given).
 const MAX_SHOWN_CHARS: usize = 120;
 
-/// Des octets lisibles : du texte entre guillemets s'il s'agit d'UTF-8,
-/// sinon de l'hexadécimal. Les caractères de contrôle sont échappés.
+/// Readable bytes: quoted text if they are valid UTF-8,
+/// hexadecimal otherwise. Control characters are escaped.
 pub fn bytes(value: &[u8], full: bool) -> String {
     let shown = match std::str::from_utf8(value) {
         Ok(text) => format!("{text:?}"),
@@ -22,7 +22,7 @@ pub fn bytes(value: &[u8], full: bool) -> String {
     format!("{cut}… ({})", size(value.len() as u64))
 }
 
-/// Une clé ou une valeur facultative : `null` si absente.
+/// An optional key or value: `null` if absent.
 pub fn optional_bytes(value: Option<&[u8]>, full: bool) -> String {
     value.map_or_else(|| "null".to_string(), |v| bytes(v, full))
 }
@@ -39,9 +39,9 @@ fn hex(value: &[u8]) -> String {
     value.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Une taille en unités binaires : `512 o`, `1,5 Kio`, `64 Mio`.
+/// A size in binary units: `512 B`, `1.5 KiB`, `64 MiB`.
 pub fn size(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["o", "Kio", "Mio", "Gio", "Tio"];
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
     let mut value = bytes as f64;
     let mut unit = 0;
     while value >= 1024.0 && unit < UNITS.len() - 1 {
@@ -51,28 +51,29 @@ pub fn size(bytes: u64) -> String {
     let text = if unit == 0 || value.fract() == 0.0 {
         format!("{value:.0}")
     } else {
-        format!("{value:.1}").replace('.', ",")
+        format!("{value:.1}")
     };
     format!("{text} {}", UNITS[unit])
 }
 
-/// Une durée dans la plus grande unité qui la représente exactement.
+/// A duration in the largest unit that represents it exactly: `7d`, `12h`,
+/// `15min`, `90s`, `1500ms`.
 pub fn duration(d: Duration) -> String {
     let ms = d.as_millis();
     for (unit, size) in [
-        ("j", 86_400_000),
+        ("d", 86_400_000),
         ("h", 3_600_000),
         ("min", 60_000),
         ("s", 1000),
     ] {
         if ms >= size && ms.is_multiple_of(size) {
-            return format!("{} {unit}", ms / size);
+            return format!("{}{unit}", ms / size);
         }
     }
-    format!("{ms} ms")
+    format!("{ms}ms")
 }
 
-/// Un horodatage en millisecondes depuis l'epoch, au format ISO 8601 UTC.
+/// A timestamp in milliseconds since the epoch, formatted as ISO 8601 UTC.
 pub fn timestamp(millis: i64) -> String {
     let seconds = millis.div_euclid(1000);
     let ms = millis.rem_euclid(1000);
@@ -86,8 +87,8 @@ pub fn timestamp(millis: i64) -> String {
     )
 }
 
-/// Jours depuis le 1970-01-01 → (année, mois, jour), calendrier grégorien.
-/// Algorithme de Howard Hinnant (« chrono-Compatible Low-Level Date Algorithms »).
+/// Days since 1970-01-01 → (year, month, day), Gregorian calendar.
+/// Howard Hinnant's algorithm ("chrono-Compatible Low-Level Date Algorithms").
 fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
@@ -107,8 +108,8 @@ mod tests {
 
     #[test]
     fn text_is_quoted_and_binary_is_hex() {
-        assert_eq!(bytes(b"commande", false), "\"commande\"");
-        assert_eq!(bytes(b"ligne\nsuivante", false), "\"ligne\\nsuivante\"");
+        assert_eq!(bytes(b"order", false), "\"order\"");
+        assert_eq!(bytes(b"line\nnext", false), "\"line\\nnext\"");
         assert_eq!(bytes(&[0xff, 0x00, 0x10], false), "0xff0010");
         assert_eq!(optional_bytes(None, false), "null");
     }
@@ -117,18 +118,18 @@ mod tests {
     fn long_values_are_cut_unless_full() {
         let long = "x".repeat(500);
         let short = bytes(long.as_bytes(), false);
-        assert!(short.ends_with("… (500 o)"), "{short}");
+        assert!(short.ends_with("… (500 B)"), "{short}");
         assert_eq!(bytes(long.as_bytes(), true).len(), 502);
     }
 
     #[test]
     fn sizes_and_durations_read_naturally() {
-        assert_eq!(size(512), "512 o");
-        assert_eq!(size(1536), "1,5 Kio");
-        assert_eq!(size(64 << 20), "64 Mio");
-        assert_eq!(duration(Duration::from_secs(7 * 86_400)), "7 j");
-        assert_eq!(duration(Duration::from_millis(1500)), "1500 ms");
-        assert_eq!(duration(Duration::from_secs(90)), "90 s");
+        assert_eq!(size(512), "512 B");
+        assert_eq!(size(1536), "1.5 KiB");
+        assert_eq!(size(64 << 20), "64 MiB");
+        assert_eq!(duration(Duration::from_secs(7 * 86_400)), "7d");
+        assert_eq!(duration(Duration::from_millis(1500)), "1500ms");
+        assert_eq!(duration(Duration::from_secs(90)), "90s");
     }
 
     #[test]

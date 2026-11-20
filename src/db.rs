@@ -1,8 +1,8 @@
-//! Le point d'entrée : un dossier de données Mojay.
+//! The entry point: a Mojay data directory.
 //!
 //! ```text
 //! data/
-//!   mojay.toml     # version du format
+//!   mojay.toml     # format version
 //!   topics/<topic>/...
 //!   groups/<group>/...
 //! ```
@@ -22,19 +22,19 @@ const TOPICS_DIR: &str = "topics";
 const GROUPS_DIR: &str = "groups";
 const FORMAT_VERSION: u64 = 1;
 
-/// Un dossier de données Mojay, l'équivalent du fichier d'une base SQLite.
+/// A Mojay data directory, the equivalent of an SQLite database file.
 ///
-/// Plusieurs processus peuvent ouvrir le même dossier en même temps.
+/// Several processes can open the same directory at the same time.
 #[derive(Debug, Clone)]
 pub struct Db {
     root: PathBuf,
 }
 
 impl Db {
-    /// Ouvre le dossier de données `path`, en le créant au besoin.
+    /// Opens the data directory `path`, creating it if needed.
     ///
-    /// Renvoie [`Error::Corrupt`] si le dossier a été créé par une version de
-    /// Mojay dont le format n'est pas supporté.
+    /// Returns [`Error::Corrupt`] if the directory was created by a version of
+    /// Mojay whose format is not supported.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let root = path.as_ref().to_path_buf();
         fs::create_dir_all(root.join(TOPICS_DIR))?;
@@ -44,7 +44,7 @@ impl Db {
             Ok(text) => check_format(&meta_path, &text)?,
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
                 let entries = [("format_version", Value::Int(FORMAT_VERSION))];
-                let text = meta::format("Dossier de données Mojay.", &entries);
+                let text = meta::format("Mojay data directory.", &entries);
                 write_atomic(&meta_path, text.as_bytes())?;
             }
             Err(e) => return Err(e.into()),
@@ -52,12 +52,12 @@ impl Db {
         Ok(Self { root })
     }
 
-    /// Crée un topic. Renvoie [`Error::TopicExists`] s'il existe déjà.
+    /// Creates a topic. Returns [`Error::TopicExists`] if it already exists.
     pub fn create_topic(&self, name: &str, config: TopicConfig) -> Result<()> {
         topic::create(&self.topics_dir(), name, &config)
     }
 
-    /// Les noms des topics, triés.
+    /// The topic names, sorted.
     pub fn list_topics(&self) -> Result<Vec<String>> {
         let mut names = Vec::new();
         for entry in fs::read_dir(self.topics_dir())? {
@@ -65,7 +65,7 @@ impl Db {
             let Ok(name) = entry.file_name().into_string() else {
                 continue;
             };
-            // Les dossiers en « . » sont des créations en cours ou interrompues.
+            // Directories starting with "." are in-progress or interrupted creations.
             if !name.starts_with('.') && entry.file_type()?.is_dir() {
                 names.push(name);
             }
@@ -74,22 +74,22 @@ impl Db {
         Ok(names)
     }
 
-    /// Ouvre le writer d'un topic. Renvoie [`Error::Busy`] si un autre
-    /// producteur, dans ce processus ou un autre, est déjà ouvert.
+    /// Opens a topic's writer. Returns [`Error::Busy`] if another
+    /// producer, in this process or another one, is already open.
     pub fn producer(&self, topic: &str) -> Result<Producer> {
         Producer::open(&self.existing_topic_dir(topic)?, topic)
     }
 
-    /// Ouvre un lecteur d'un topic. Il n'y a pas de limite au nombre de lecteurs.
+    /// Opens a reader on a topic. There is no limit on the number of readers.
     pub fn reader(&self, topic: &str) -> Result<TopicReader> {
         TopicReader::open(&self.existing_topic_dir(topic)?, topic)
     }
 
-    /// Ouvre un consumer du groupe `group`, abonné à `topics`.
+    /// Opens a consumer in group `group`, subscribed to `topics`.
     ///
-    /// Un consumer seul est l'unique membre d'un groupe à son nom. Il reprend
-    /// chaque partition à l'offset commité par le groupe, ou selon
-    /// [`ConsumerConfig::start_from`] s'il n'y en a pas.
+    /// A standalone consumer is the only member of a group named after it. It resumes
+    /// each partition at the offset committed by the group, or according to
+    /// [`ConsumerConfig::start_from`] if there is none.
     pub fn consumer(
         &self,
         group: &str,
@@ -103,13 +103,13 @@ impl Db {
         Consumer::open(&self.root.join(GROUPS_DIR), group, readers, config)
     }
 
-    /// Décrit un topic : configuration, offsets lisibles et segments de chaque
-    /// partition. Ne modifie rien.
+    /// Describes a topic: configuration, readable offsets and segments of each
+    /// partition. Modifies nothing.
     pub fn describe_topic(&self, topic: &str) -> Result<TopicDescription> {
         topic::describe(&self.existing_topic_dir(topic)?, topic)
     }
 
-    /// Les offsets commités pour `topic` par tous les groupes. Ne modifie rien.
+    /// The offsets committed for `topic` by all groups. Modifies nothing.
     pub fn committed_offsets(&self, topic: &str) -> Result<Vec<CommittedOffset>> {
         let partitions = self.describe_topic(topic)?.config.partitions;
         group::committed_offsets(&self.root.join(GROUPS_DIR), topic, partitions)
@@ -136,7 +136,7 @@ fn check_format(path: &Path, text: &str) -> Result<()> {
     if version != FORMAT_VERSION {
         return Err(corrupt(
             path,
-            format!("version de format {version} non supportée (attendue : {FORMAT_VERSION})"),
+            format!("unsupported format version {version} (expected {FORMAT_VERSION})"),
         ));
     }
     Ok(())

@@ -9,7 +9,7 @@ const FIRST_INDEX: &str = "00000000000000000000.idx";
 const ALL: usize = usize::MAX;
 
 fn message(i: u64) -> Message {
-    Message::new(format!("k{i}"), format!("valeur-{i}")).header("n", i.to_string())
+    Message::new(format!("k{i}"), format!("value-{i}")).header("n", i.to_string())
 }
 
 fn small_segments() -> LogConfig {
@@ -23,7 +23,7 @@ fn small_segments() -> LogConfig {
 fn assert_is_message(rec: &Record, i: u64) {
     assert_eq!(rec.offset, i);
     assert_eq!(rec.key.as_deref(), Some(format!("k{i}").as_bytes()));
-    assert_eq!(rec.value.as_deref(), Some(format!("valeur-{i}").as_bytes()));
+    assert_eq!(rec.value.as_deref(), Some(format!("value-{i}").as_bytes()));
     assert_eq!(rec.headers[0].value, i.to_string().into_bytes());
 }
 
@@ -37,8 +37,8 @@ fn log_files(dir: &Path) -> Vec<PathBuf> {
     files
 }
 
-/// Ouvre un log, y ajoute `count` messages, et renvoie la taille du premier
-/// segment après chaque ajout (la frontière de chaque enregistrement).
+/// Open a log, append `count` messages to it, and return the size of the
+/// first segment after each append (the boundary of each record).
 fn build_log(dir: &Path, config: LogConfig, count: u64) -> Vec<u64> {
     let mut log = PartitionLog::open(dir, config).unwrap();
     let mut boundaries = vec![fs::metadata(dir.join(FIRST_SEGMENT)).unwrap().len()];
@@ -111,11 +111,11 @@ fn segments_roll_and_reads_cross_them() {
         log.append(&message(i)).unwrap();
     }
     let files = log_files(dir.path());
-    assert!(files.len() > 5, "{} segments seulement", files.len());
+    assert!(files.len() > 5, "only {} segments", files.len());
     for file in &files {
         assert!(fs::metadata(file).unwrap().len() <= 300);
     }
-    // Chaque offset se relit correctement, quel que soit son segment.
+    // Every offset reads back correctly, whatever its segment.
     for i in 0..100 {
         let records = log.read(i, ALL).unwrap();
         assert_eq!(records.len() as u64, 100 - i);
@@ -144,7 +144,7 @@ fn read_respects_byte_budget_without_skipping() {
     for i in 0..60 {
         log.append(&message(i)).unwrap();
     }
-    // Paginer avec un petit budget doit tout relire, dans l'ordre, sans trou.
+    // Paging with a small budget must read everything back, in order, with no gaps.
     let mut next = 0;
     let mut seen = 0;
     while next < log.next_offset() {
@@ -196,8 +196,8 @@ fn invalid_config_is_rejected() {
     ));
 }
 
-/// Simule un crash à chaque octet possible : le log doit toujours se rouvrir
-/// avec exactement les enregistrements complets, puis accepter de nouvelles écritures.
+/// Simulate a crash at every possible byte: the log must always reopen
+/// with exactly the complete records, then accept new writes.
 #[test]
 fn recovers_from_a_cut_at_every_byte() {
     let reference = TempDir::new().unwrap();
@@ -210,25 +210,25 @@ fn recovers_from_a_cut_at_every_byte() {
     let full_index = fs::read(reference.path().join(FIRST_INDEX)).unwrap();
     assert!(
         !full_index.is_empty(),
-        "le test doit couvrir un index non vide"
+        "the test must cover a non-empty index"
     );
 
     for cut in boundaries[0]..=*boundaries.last().unwrap() {
         let dir = TempDir::new().unwrap();
         fs::write(dir.path().join(FIRST_SEGMENT), &full_log[..cut as usize]).unwrap();
-        // L'index complet a « survécu » au crash, avec des entrées au-delà de la coupure.
+        // The full index "survived" the crash, with entries beyond the cut.
         fs::write(dir.path().join(FIRST_INDEX), &full_index).unwrap();
 
         let complete = boundaries.iter().filter(|&&b| b <= cut).count() as u64 - 1;
         let mut log = PartitionLog::open(dir.path(), config.clone()).unwrap();
-        assert_eq!(log.next_offset(), complete, "coupure à l'octet {cut}");
+        assert_eq!(log.next_offset(), complete, "cut at byte {cut}");
         for i in 0..complete {
             assert_is_message(&log.read(i, ALL).unwrap()[0], i);
         }
         assert_eq!(
             fs::metadata(dir.path().join(FIRST_SEGMENT)).unwrap().len(),
             boundaries[complete as usize],
-            "la fin incomplète doit être tronquée"
+            "the incomplete tail must be truncated"
         );
 
         assert_eq!(log.append(&message(complete)).unwrap(), complete);
@@ -258,7 +258,7 @@ fn corrupted_record_in_active_segment_truncates_from_there() {
     let boundaries = build_log(dir.path(), LogConfig::default(), 5);
     let path = dir.path().join(FIRST_SEGMENT);
     let mut bytes = fs::read(&path).unwrap();
-    bytes[boundaries[2] as usize + 12] ^= 0xFF; // dans l'enregistrement d'offset 2
+    bytes[boundaries[2] as usize + 12] ^= 0xFF; // inside the record at offset 2
     fs::write(&path, bytes).unwrap();
 
     let log = PartitionLog::open(dir.path(), LogConfig::default()).unwrap();
@@ -292,7 +292,7 @@ fn wrong_index_entries_are_ignored() {
         log.append(&message(i)).unwrap();
     }
     drop(log);
-    // Une entrée qui pointe au milieu de nulle part, dans l'index du segment actif.
+    // An entry pointing into the middle of nowhere, in the active segment's index.
     let last_index = log_files(dir.path()).last().unwrap().with_extension("idx");
     let mut bytes = fs::read(&last_index).unwrap();
     bytes.extend_from_slice(&5u32.to_le_bytes());
@@ -346,7 +346,7 @@ fn file_that_is_not_a_segment_is_rejected() {
     let dir = TempDir::new().unwrap();
     fs::write(
         dir.path().join(FIRST_SEGMENT),
-        b"ceci n'est pas un segment Mojay",
+        b"this is not a Mojay segment",
     )
     .unwrap();
     assert!(matches!(

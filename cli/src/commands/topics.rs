@@ -1,4 +1,4 @@
-//! `mojay create-topic` et `mojay topics`.
+//! `mojay create-topic` and `mojay topics`.
 
 use std::io::Write;
 use std::path::Path;
@@ -11,21 +11,21 @@ use crate::parse;
 
 #[derive(Debug, clap::Args)]
 pub struct CreateArgs {
-    /// Nom du topic : lettres, chiffres, « . », « _ » et « - ».
+    /// Topic name: letters, digits, ".", "_" and "-".
     pub name: String,
-    /// Nombre de partitions, fixé à la création.
+    /// Number of partitions, fixed at creation.
     #[arg(long, short, default_value_t = 1)]
     pub partitions: u32,
-    /// Taille maximale d'un segment, par exemple 64Mio.
-    #[arg(long, value_parser = parse::size, default_value = "64Mio")]
+    /// Maximum segment size, e.g. 64MiB.
+    #[arg(long, value_parser = parse::size, default_value = "64MiB")]
     pub segment_size: u64,
-    /// Politique fsync : always, never, ou un intervalle comme 100ms.
+    /// fsync policy: always, never, or an interval such as 100ms.
     #[arg(long, value_parser = parse::fsync, default_value = "always")]
     pub fsync: FsyncPolicy,
-    /// Taille maximale d'une partition avant suppression des plus vieux segments, par exemple 10Gio.
+    /// Maximum partition size before the oldest segments are deleted, e.g. 10GiB.
     #[arg(long, value_parser = parse::size)]
     pub retention_size: Option<u64>,
-    /// Âge maximal d'un segment avant suppression, par exemple 7d.
+    /// Maximum segment age before deletion, e.g. 7d.
     #[arg(long, value_parser = parse::duration)]
     pub retention_time: Option<Duration>,
 }
@@ -47,7 +47,7 @@ pub fn create(data: &Path, args: CreateArgs, out: &mut impl Write) -> CliResult 
     db.create_topic(&args.name, config)?;
     writeln!(
         out,
-        "topic « {} » créé ({} partition{})",
+        "topic \"{}\" created ({} partition{})",
         args.name,
         args.partitions,
         if args.partitions > 1 { "s" } else { "" }

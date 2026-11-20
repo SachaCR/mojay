@@ -1,62 +1,61 @@
-# Démo Mojay : un producteur, plusieurs lecteurs
+# Mojay demo: one producer, several readers
 
-Deux petits programmes pour voir Mojay fonctionner en local, sans serveur :
+Two small programs to watch Mojay work locally, with no server:
 
-- **`mojay-demo-producer`** publie des événements de commande en JSON dans le
-  topic `demo-events` (3 partitions), jusqu'à Ctrl-C. La clé de chaque
-  message est le client : les événements d'un client restent dans la même
-  partition, dans l'ordre.
-- **`mojay-demo-consumer`** rejoint le groupe `demo-loggers` et affiche les
-  messages qu'il reçoit, ainsi que les partitions reçues ou cédées.
+- **`mojay-demo-producer`** publishes order events as JSON to the `demo-events`
+  topic (3 partitions), until Ctrl-C. Each message's key is the customer, so a
+  customer's events stay in the same partition, in order.
+- **`mojay-demo-consumer`** joins the `demo-loggers` group and prints the
+  messages it receives, along with the partitions it gets or gives up.
 
-## Lancer la démo
+## Running the demo
 
-Depuis la racine du dépôt, dans un premier terminal :
+From the repository root, in a first terminal:
 
 ```bash
 cargo run -p mojay-demo-producer
 ```
 
-Puis, dans un à trois autres terminaux :
+Then, in one to three other terminals:
 
 ```bash
 cargo run -p mojay-demo-consumer
 ```
 
-Tous partagent le dossier `./demo-data`, que Git ignore.
+They all share the `./demo-data` folder, which Git ignores.
 
-## Ce qu'on observe
+## What you will see
 
-- **Un seul lecteur** reçoit les 3 partitions.
-- **Un deuxième lecteur** : en moins d'une seconde, le premier cède une
-  partition (`- partition 2 cédée`), que le second reçoit (`+ partition 2 reçue`).
-- **Trois lecteurs** : une partition chacun.
-- **Ctrl-C sur un lecteur** : il commite, rend ses partitions, et les autres
-  les reprennent exactement où il s'était arrêté, sans doublon.
-- **Un lecteur tué** (`kill -9`) : les autres reprennent ses partitions au
-  dernier commit (au plus une seconde de messages relus).
-- **Relancer un lecteur** : il reprend là où le groupe s'était arrêté.
+- **One reader** gets all 3 partitions.
+- **A second reader**: within a second, the first one gives up a partition
+  (`- gave partition 2 to another member`), which the second one receives
+  (`+ received partition 2`).
+- **Three readers**: one partition each.
+- **Ctrl-C on a reader**: it commits, hands its partitions back, and the others
+  pick them up exactly where it stopped, with no duplicate.
+- **A killed reader** (`kill -9`): the others take over its partitions from its
+  last commit (at most one second of messages is read again).
+- **Restarting a reader**: it resumes where the group left off.
 
-Pour suivre l'état du topic et le retard du groupe pendant ce temps :
+To follow the topic's state and the group's lag meanwhile:
 
 ```bash
 cargo run -p mojay-cli -- -d ./demo-data describe demo-events
 ```
 
-## Options utiles
+## Useful options
 
-| Programme | Option | Effet |
+| Program | Option | Effect |
 | --- | --- | --- |
-| producteur | `--rate 1000` | 1 000 événements par seconde (un résumé par seconde au lieu d'une ligne par événement) |
-| consumer | `--group autre` | Un autre groupe : il relit tout, indépendamment de `demo-loggers` |
-| consumer | `--latest` | Sans commit, ne lire que les nouveaux messages |
-| les deux | `--data chemin` | Un autre dossier de données |
+| producer | `--rate 1000` | 1,000 events per second (a summary every second instead of one line per event) |
+| consumer | `--group other` | Another group: it reads everything again, independently of `demo-loggers` |
+| consumer | `--latest` | Without a commit, read only new messages |
+| both | `--data path` | Another data folder |
 
-## Espace disque
+## Disk space
 
-Le topic est créé avec une rétention d'environ **500 Mio au total** (la
-limite s'applique par partition : 500 Mio / 3), avec des segments de 16 Mio.
-Le producteur peut donc tourner indéfiniment : les plus vieux segments sont
-supprimés au fur et à mesure.
+The topic is created with a retention of about **500 MiB in total** (the limit
+applies per partition: 500 MiB / 3), with 16 MiB segments. The producer can
+therefore run forever: the oldest segments are deleted as it goes.
 
-Pour repartir de zéro : arrêter les programmes, puis supprimer `./demo-data`.
+To start over: stop the programs, then delete `./demo-data`.

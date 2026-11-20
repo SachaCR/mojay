@@ -1,7 +1,7 @@
-//! Tests des topics : création, writer unique, lecteurs, limites de lecture.
+//! Topic tests: creation, single writer, readers, read limits.
 //!
-//! Les tests multi-processus relancent ce même binaire de test dans un
-//! processus enfant (voir `child_process`), qui joue un scénario donné.
+//! Multi-process tests rerun this same test binary in a child process
+//! (see `child_process`), which plays a given scenario.
 
 #[allow(dead_code)]
 mod common;
@@ -19,14 +19,14 @@ const STREAM_LEN: u64 = 3000;
 
 fn assert_is_message(rec: &Record, i: u64) {
     assert_eq!(rec.offset, i);
-    assert_eq!(rec.value, message(i).value, "contenu de l'offset {i}");
+    assert_eq!(rec.value, message(i).value, "content of offset {i}");
 }
 
 // ---------------------------------------------------------------------------
-// Processus enfant
+// Child process
 // ---------------------------------------------------------------------------
 
-/// Point d'entrée des processus enfants. Ne fait rien dans un test normal.
+/// Entry point for child processes. Does nothing in a normal test run.
 #[test]
 fn child_process() {
     let Some((scenario, db)) = common::child_scenario() else {
@@ -36,7 +36,7 @@ fn child_process() {
         "try_producer" => match db.producer("orders") {
             Ok(_) => println!("RESULT:ok"),
             Err(Error::Busy(_)) => println!("RESULT:busy"),
-            Err(e) => panic!("erreur inattendue : {e}"),
+            Err(e) => panic!("unexpected error: {e}"),
         },
         "write_stream" => {
             let mut producer = db.producer("stream").unwrap();
@@ -47,17 +47,17 @@ fn child_process() {
         }
         "write_until_killed" => {
             let mut producer = db.producer("stream").unwrap();
-            // Écrit sans fin : le parent tue ce processus en pleine écriture.
+            // Write forever: the parent kills this process mid-write.
             for i in 0..u64::MAX {
                 producer.send_to(0, &message(i)).unwrap();
             }
         }
-        other => panic!("scénario inconnu : {other}"),
+        other => panic!("unknown scenario: {other}"),
     }
 }
 
 // ---------------------------------------------------------------------------
-// Création et noms
+// Creation and names
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -103,7 +103,7 @@ fn data_folder_from_an_unknown_format_is_refused() {
 }
 
 // ---------------------------------------------------------------------------
-// Production et lecture
+// Producing and reading
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -143,7 +143,7 @@ fn reader_follows_new_messages_and_segments_without_reopening() {
         for i in batch * 30..(batch + 1) * 30 {
             producer.send_to(0, &message(i)).unwrap();
         }
-        // Le lecteur, ouvert avant, voit les nouveaux messages et segments.
+        // The reader, opened beforehand, sees the new messages and segments.
         while next < reader.read_limit(0).unwrap() {
             for rec in reader.read(0, next, 4096).unwrap() {
                 assert_is_message(&rec, next);
@@ -175,7 +175,7 @@ fn unknown_partition_is_reported() {
 }
 
 // ---------------------------------------------------------------------------
-// Limite de lecture
+// Read limit
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -189,7 +189,7 @@ fn reader_never_reads_past_the_read_limit() {
     }
     drop(producer);
 
-    // On simule un writer qui n'a publié que les 4 premiers messages.
+    // Simulate a writer that has published only the first 4 messages.
     let limits = dir.path().join("topics/orders/read_limits");
     let file = OpenOptions::new().write(true).open(limits).unwrap();
     file.write_all_at(&4u64.to_le_bytes(), 0).unwrap();
@@ -215,7 +215,7 @@ fn read_limit_follows_the_log_after_recovery() {
     }
     drop(producer);
 
-    // Fin d'écriture interrompue : des octets en trop dans le segment actif.
+    // Interrupted write: extra trailing bytes in the active segment.
     let segment = dir.path().join("topics/orders/p0/00000000000000000000.log");
     let mut bytes = fs::read(&segment).unwrap();
     bytes.extend_from_slice(&[0xAB; 20]);
@@ -228,7 +228,7 @@ fn read_limit_follows_the_log_after_recovery() {
 }
 
 // ---------------------------------------------------------------------------
-// Writer unique
+// Single writer
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -252,8 +252,8 @@ fn second_producer_in_another_process_is_busy() {
     assert_eq!(run_child("try_producer", dir.path()), "ok");
 }
 
-/// Un writer tué en pleine écriture libère le verrou, et tout ce qui avait été
-/// rendu lisible (avec `Always`) est encore là après réparation.
+/// A writer killed mid-write releases the lock, and everything that had been
+/// made readable (with `Always`) is still there after repair.
 #[test]
 fn killed_writer_releases_the_lock_and_keeps_published_messages() {
     let (dir, db) = new_db();
@@ -269,7 +269,7 @@ fn killed_writer_releases_the_lock_and_keeps_published_messages() {
     child.wait().unwrap();
     let published_before_kill = reader.read_limit(0).unwrap();
 
-    let _producer = db.producer("stream").expect("le verrou doit être libéré");
+    let _producer = db.producer("stream").expect("the lock must be released");
     let mut reader = db.reader("stream").unwrap();
     let recovered = reader.read_limit(0).unwrap();
     assert!(recovered >= published_before_kill);
@@ -282,8 +282,8 @@ fn killed_writer_releases_the_lock_and_keeps_published_messages() {
     }
 }
 
-/// Un lecteur suit un writer d'un autre processus, segment après segment, et
-/// ne voit jamais un message incomplet.
+/// A reader follows a writer in another process, segment by segment, and
+/// never sees an incomplete message.
 #[test]
 fn reader_follows_a_writer_in_another_process() {
     let (dir, db) = new_db();
@@ -305,7 +305,7 @@ fn reader_follows_a_writer_in_another_process() {
 }
 
 // ---------------------------------------------------------------------------
-// fsync périodique
+// Periodic fsync
 // ---------------------------------------------------------------------------
 
 #[test]

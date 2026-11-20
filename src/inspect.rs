@@ -1,9 +1,9 @@
-//! Inspection d'un segment, pour déboguer : afficher ce qui est réellement
-//! stocké, octet par octet. Lecture seule : rien n'est jamais réparé.
+//! Segment inspection, for debugging: shows what is actually
+//! stored, byte by byte. Read-only: nothing is ever repaired.
 //!
-//! Contrairement à la lecture normale, l'inspection ne s'arrête pas en
-//! erreur sur des données abîmées : elle rapporte ce qu'elle a pu lire, puis
-//! où et pourquoi la suite est illisible.
+//! Unlike normal reading, inspection does not stop with an
+//! error on damaged data: it reports what it could read, then
+//! where and why the rest is unreadable.
 
 use std::fs;
 use std::io;
@@ -14,33 +14,33 @@ use crate::index::{ENTRY_SIZE, SparseIndex};
 use crate::record::{self, ReadOutcome, Record};
 use crate::segment::{HEADER_SIZE, parse_header};
 
-/// Le contenu d'un fichier de segment `.log` et de son index.
+/// The contents of a `.log` segment file and its index.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SegmentDump {
     pub path: PathBuf,
     pub size_bytes: u64,
-    /// L'offset de base, lu dans le nom du fichier s'il est au format attendu.
+    /// The base offset, read from the file name if it has the expected format.
     pub base_offset: Option<u64>,
-    /// La version de format, ou la raison pour laquelle l'en-tête est invalide.
+    /// The format version, or the reason why the header is invalid.
     pub header: std::result::Result<u16, String>,
-    /// Les enregistrements lisibles, dans l'ordre.
+    /// The readable records, in order.
     pub records: Vec<DumpedRecord>,
-    /// La fin illisible du fichier, s'il y en a une.
+    /// The unreadable end of the file, if there is one.
     pub unreadable_tail: Option<UnreadableTail>,
-    /// Les entrées de l'index `.idx`, s'il existe.
+    /// The entries of the `.idx` index, if it exists.
     pub index: Option<IndexDump>,
 }
 
-/// Un enregistrement et sa place dans le fichier.
+/// A record and its location in the file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DumpedRecord {
     pub position: u64,
-    /// Taille encodée, préfixe de longueur compris.
+    /// Encoded size, including the length prefix.
     pub size: usize,
     pub record: Record,
 }
 
-/// Des octets qu'on ne sait pas lire comme un enregistrement.
+/// Bytes that cannot be read as a record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnreadableTail {
     pub position: u64,
@@ -48,11 +48,11 @@ pub struct UnreadableTail {
     pub reason: String,
 }
 
-/// Le contenu brut d'un fichier d'index.
+/// The raw contents of an index file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndexDump {
     pub entries: Vec<DumpedIndexEntry>,
-    /// Octets en trop à la fin (entrée tronquée).
+    /// Extra bytes at the end (truncated entry).
     pub leftover_bytes: usize,
 }
 
@@ -60,12 +60,12 @@ pub struct IndexDump {
 pub struct DumpedIndexEntry {
     pub relative_offset: u32,
     pub position: u32,
-    /// `false` si l'entrée est incohérente (hors du log, ou pas croissante) :
-    /// la lecture normale l'ignore, ainsi que toutes les suivantes.
+    /// `false` if the entry is inconsistent (outside the log, or not increasing):
+    /// normal reading ignores it, along with all the following ones.
     pub valid: bool,
 }
 
-/// Lit un fichier `.log` et son index, sans rien modifier.
+/// Reads a `.log` file and its index, without modifying anything.
 pub fn dump_segment(path: impl AsRef<Path>) -> Result<SegmentDump> {
     let path = path.as_ref();
     let bytes = fs::read(path)?;
@@ -89,7 +89,7 @@ pub fn dump_segment(path: impl AsRef<Path>) -> Result<SegmentDump> {
                     continue;
                 }
                 ReadOutcome::End => break,
-                ReadOutcome::Incomplete => "enregistrement incomplet".to_string(),
+                ReadOutcome::Incomplete => "incomplete record".to_string(),
                 ReadOutcome::Corrupt(reason) => reason,
             };
             unreadable_tail = Some(UnreadableTail {
@@ -125,7 +125,7 @@ fn dump_index(path: &Path, log_size: u64) -> Result<Option<IndexDump>> {
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e.into()),
     };
-    // La lecture normale garde le plus long préfixe cohérent.
+    // Normal reading keeps the longest consistent prefix.
     let valid_prefix = SparseIndex::parse(&raw, HEADER_SIZE, log_size).index.len();
     let (chunks, leftover) = raw.as_chunks::<ENTRY_SIZE>();
     let entries = chunks
@@ -191,19 +191,15 @@ mod tests {
         assert_eq!(dump.records.len(), 2);
         let tail = dump.unreadable_tail.unwrap();
         assert_eq!(tail.position, third as u64);
-        assert_eq!(tail.reason, "CRC invalide");
-        assert_eq!(
-            fs::read(&path).unwrap(),
-            bytes,
-            "le fichier n'est pas modifié"
-        );
+        assert_eq!(tail.reason, "invalid CRC");
+        assert_eq!(fs::read(&path).unwrap(), bytes, "the file is not modified");
     }
 
     #[test]
     fn invalid_header_is_reported() {
         let dir = tempfile::TempDir::new().unwrap();
         let path = dir.path().join("notes.log");
-        fs::write(&path, b"pas un segment du tout").unwrap();
+        fs::write(&path, b"not a segment at all").unwrap();
         let dump = dump_segment(&path).unwrap();
         assert!(dump.header.is_err());
         assert_eq!(dump.base_offset, None);

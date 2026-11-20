@@ -1,4 +1,4 @@
-//! `mojay` : inspecter et manipuler un dossier de données Mojay en ligne de commande.
+//! `mojay`: inspect and manipulate a Mojay data directory from the command line.
 
 mod commands;
 mod display;
@@ -16,10 +16,10 @@ use commands::{CliError, CliResult};
 #[command(
     name = "mojay",
     version,
-    about = "Inspecter et manipuler un dossier de données Mojay"
+    about = "Inspect and manipulate a Mojay data directory"
 )]
 struct Cli {
-    /// Le dossier de données.
+    /// The data directory.
     #[arg(
         long,
         short,
@@ -34,20 +34,20 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Crée un topic (et le dossier de données s'il n'existe pas).
+    /// Create a topic (and the data directory if it does not exist).
     CreateTopic(commands::topics::CreateArgs),
-    /// Liste les topics.
+    /// List topics.
     Topics,
-    /// Décrit un topic : configuration, partitions, segments, offsets des groupes.
+    /// Describe a topic: configuration, partitions, segments, group offsets.
     Describe {
-        /// Le topic à décrire.
+        /// The topic to describe.
         topic: String,
     },
-    /// Envoie un message, ou une ligne de l'entrée standard par message.
+    /// Send a message, or one message per line of standard input.
     Produce(commands::produce::Args),
-    /// Affiche les messages d'un topic, sans rien commiter.
+    /// Show a topic's messages, without committing anything.
     Tail(commands::tail::Args),
-    /// Affiche le contenu brut d'un segment (positions, offsets, fin illisible), pour déboguer.
+    /// Show the raw contents of a segment (positions, offsets, unreadable tail), for debugging.
     Dump(commands::dump::Args),
 }
 
@@ -59,7 +59,7 @@ fn main() -> ExitCode {
         Ok(()) | Err(CliError::OutputClosed) => ExitCode::SUCCESS,
         Err(error) => {
             drop(out);
-            eprintln!("erreur : {error}");
+            eprintln!("error: {error}");
             ExitCode::FAILURE
         }
     }

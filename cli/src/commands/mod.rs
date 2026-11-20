@@ -1,4 +1,4 @@
-//! Les commandes de la CLI : une par fichier.
+//! CLI commands: one per file.
 
 pub mod describe;
 pub mod dump;
@@ -12,10 +12,10 @@ use std::path::Path;
 
 use mojay::Db;
 
-/// Une erreur à afficher à l'utilisateur, puis sortie avec le code 1.
+/// An error to show to the user, then exit with code 1.
 #[derive(Debug)]
 pub enum CliError {
-    /// La sortie a été fermée (`mojay tail … | head`) : ce n'est pas un échec.
+    /// The output was closed (`mojay tail … | head`): this is not a failure.
     OutputClosed,
     Message(String),
 }
@@ -23,7 +23,7 @@ pub enum CliError {
 impl fmt::Display for CliError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::OutputClosed => f.write_str("sortie fermée"),
+            Self::OutputClosed => f.write_str("output closed"),
             Self::Message(message) => f.write_str(message),
         }
     }
@@ -43,7 +43,7 @@ impl From<io::Error> for CliError {
         if error.kind() == io::ErrorKind::BrokenPipe {
             Self::OutputClosed
         } else {
-            Self::Message(format!("erreur d'entrée/sortie : {error}"))
+            Self::Message(format!("I/O error: {error}"))
         }
     }
 }
@@ -56,12 +56,12 @@ impl From<String> for CliError {
 
 pub type CliResult = Result<(), CliError>;
 
-/// Ouvre un dossier de données qui doit déjà exister. Seule `create-topic`
-/// crée un dossier : une faute de frappe ne doit pas en créer un vide ailleurs.
+/// Open a data directory that must already exist. Only `create-topic`
+/// creates one: a typo must not create an empty directory elsewhere.
 pub fn open_existing(data: &Path) -> Result<Db, CliError> {
     if !data.join("mojay.toml").is_file() {
         return Err(CliError::Message(format!(
-            "{} n'est pas un dossier de données Mojay (option --data ou variable MOJAY_DATA)",
+            "{} is not a Mojay data directory (use --data or MOJAY_DATA)",
             data.display()
         )));
     }

@@ -1,4 +1,4 @@
-//! Le `fsync` périodique de la politique [`FsyncPolicy::Interval`](crate::FsyncPolicy::Interval).
+//! The periodic `fsync` of the [`FsyncPolicy::Interval`](crate::FsyncPolicy::Interval) policy.
 
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
@@ -7,22 +7,22 @@ use std::time::Duration;
 use crate::error::{Error, Result};
 use crate::log::PartitionLog;
 
-/// Les logs d'un producteur, partagés avec le thread de `fsync`.
+/// A producer's logs, shared with the `fsync` thread.
 pub(super) type SharedLogs = Arc<Mutex<Vec<PartitionLog>>>;
 
-/// Verrouille les logs. Un verrou empoisonné (panic d'un autre thread pendant
-/// qu'il le tenait) ne rend pas les logs incohérents : chaque opération du log
-/// laisse un état valide sur le disque. On continue donc avec.
+/// Locks the logs. A poisoned lock (panic in another thread while
+/// it held it) does not make the logs inconsistent: every log operation
+/// leaves a valid state on disk. So we carry on with it.
 pub(super) fn lock(logs: &Mutex<Vec<PartitionLog>>) -> MutexGuard<'_, Vec<PartitionLog>> {
     logs.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Un thread qui fait un `fsync` de toutes les partitions à intervalle régulier,
-/// puis une dernière fois à l'arrêt.
+/// A thread that `fsync`s all partitions at a regular interval,
+/// then one last time on shutdown.
 #[derive(Debug)]
 pub(super) struct BackgroundSync {
     stop: Arc<(Mutex<bool>, Condvar)>,
-    /// La première erreur de `fsync` rencontrée, rendue à l'appel suivant du producteur.
+    /// The first `fsync` error encountered, returned on the producer's next call.
     failure: Arc<Mutex<Option<Error>>>,
     handle: Option<JoinHandle<()>>,
 }
@@ -43,7 +43,7 @@ impl BackgroundSync {
         })
     }
 
-    /// Renvoie, une seule fois, l'erreur survenue en arrière-plan s'il y en a eu une.
+    /// Returns, only once, the error that occurred in the background, if any.
     pub(super) fn take_failure(&self) -> Option<Error> {
         self.failure
             .lock()
@@ -51,7 +51,7 @@ impl BackgroundSync {
             .take()
     }
 
-    /// Arrête le thread après un dernier `fsync`, et renvoie une éventuelle erreur.
+    /// Stops the thread after a final `fsync`, and returns any error.
     pub(super) fn stop(mut self) -> Option<Error> {
         self.shutdown();
         self.take_failure()
@@ -64,8 +64,8 @@ impl BackgroundSync {
         let (flag, wake) = &*self.stop;
         *flag.lock().unwrap_or_else(PoisonError::into_inner) = true;
         wake.notify_one();
-        // Le thread ne panique pas en fonctionnement normal ; s'il l'a fait,
-        // il n'y a plus rien à arrêter.
+        // The thread does not panic in normal operation; if it did,
+        // there is nothing left to stop.
         let _ = handle.join();
     }
 }

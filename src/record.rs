@@ -1,22 +1,22 @@
-//! Format binaire d'un enregistrement (little-endian) :
+//! Binary format of a record (little-endian):
 //!
-//! | Champ           | Type        | Rôle                                   |
+//! | Field           | Type        | Purpose                                |
 //! |-----------------|-------------|----------------------------------------|
-//! | `length`        | `u32`       | Taille de tout ce qui suit             |
-//! | `crc`           | `u32`       | CRC32C de tout ce qui suit             |
-//! | `offset`        | `u64`       | Offset absolu dans la partition        |
-//! | `timestamp`     | `i64`       | Millisecondes depuis l'epoch           |
-//! | `attributes`    | `u8`        | Réservé (compression, flags futurs)    |
-//! | `key_len`, key  | `i32` + …   | -1 = pas de clé                        |
-//! | `value_len`, …  | `i32` + …   | -1 = valeur nulle (tombstone)          |
-//! | `headers_count` | `u16`       | Puis `u16` + clé, `u32` + valeur       |
+//! | `length`        | `u32`       | Size of everything that follows        |
+//! | `crc`           | `u32`       | CRC32C of everything that follows      |
+//! | `offset`        | `u64`       | Absolute offset in the partition       |
+//! | `timestamp`     | `i64`       | Milliseconds since the epoch           |
+//! | `attributes`    | `u8`        | Reserved (compression, future flags)   |
+//! | `key_len`, key  | `i32` + …   | -1 = no key                            |
+//! | `value_len`, …  | `i32` + …   | -1 = null value (tombstone)            |
+//! | `headers_count` | `u16`       | Then `u16` + key, `u32` + value        |
 
 use std::io::{self, Read};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::error::{Error, Result};
 
-/// Taille maximale d'un enregistrement encodé, préfixe de longueur compris.
+/// Maximum size of an encoded record, including the length prefix.
 pub const MAX_RECORD_SIZE: usize = 16 * 1024 * 1024;
 
 const LEN_SIZE: usize = 4;
@@ -24,25 +24,25 @@ const CRC_SIZE: usize = 4;
 /// offset + timestamp + attributes + key_len + value_len + headers_count
 const MIN_BODY_SIZE: usize = 8 + 8 + 1 + 4 + 4 + 2;
 
-/// Un header de message : une clé texte et une valeur binaire, comme dans Kafka.
+/// A message header: a text key and a binary value, as in Kafka.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Header {
     pub key: String,
     pub value: Vec<u8>,
 }
 
-/// Un message à produire. L'offset est attribué par le log.
+/// A message to produce. The offset is assigned by the log.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Message {
     pub key: Option<Vec<u8>>,
     pub value: Option<Vec<u8>>,
     pub headers: Vec<Header>,
-    /// Millisecondes depuis l'epoch. `None` = l'horloge locale au moment de l'ajout.
+    /// Milliseconds since the epoch. `None` = the local clock at append time.
     pub timestamp: Option<i64>,
 }
 
 impl Message {
-    /// Un message avec une clé et une valeur.
+    /// A message with a key and a value.
     pub fn new(key: impl Into<Vec<u8>>, value: impl Into<Vec<u8>>) -> Self {
         Self {
             key: Some(key.into()),
@@ -51,7 +51,7 @@ impl Message {
         }
     }
 
-    /// Un message sans clé.
+    /// A message without a key.
     pub fn with_value(value: impl Into<Vec<u8>>) -> Self {
         Self {
             value: Some(value.into()),
@@ -73,7 +73,7 @@ impl Message {
     }
 }
 
-/// Un enregistrement lu depuis le log.
+/// A record read from the log.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Record {
     pub offset: u64,
@@ -90,7 +90,7 @@ pub(crate) fn now_millis() -> i64 {
         .unwrap_or(0)
 }
 
-/// Taille encodée d'un message, préfixe de longueur compris.
+/// Encoded size of a message, including the length prefix.
 pub(crate) fn encoded_size(msg: &Message) -> usize {
     let opt = |b: &Option<Vec<u8>>| b.as_ref().map_or(0, Vec::len);
     let headers: usize = msg
@@ -101,7 +101,7 @@ pub(crate) fn encoded_size(msg: &Message) -> usize {
     LEN_SIZE + CRC_SIZE + MIN_BODY_SIZE + opt(&msg.key) + opt(&msg.value) + headers
 }
 
-/// Vérifie qu'un message est encodable, et renvoie sa taille encodée.
+/// Checks that a message can be encoded, and returns its encoded size.
 pub(crate) fn validate(msg: &Message) -> Result<usize> {
     let size = encoded_size(msg);
     if size > MAX_RECORD_SIZE {
@@ -119,7 +119,7 @@ pub(crate) fn validate(msg: &Message) -> Result<usize> {
     }
     if let Some(h) = msg.headers.iter().find(|h| h.key.len() > u16::MAX as usize) {
         return Err(Error::InvalidRecord(format!(
-            "clé de header de {} octets (maximum {})",
+            "header key of {} bytes (maximum {})",
             h.key.len(),
             u16::MAX
         )));
@@ -127,7 +127,7 @@ pub(crate) fn validate(msg: &Message) -> Result<usize> {
     Ok(size)
 }
 
-/// Encode `msg` à la fin de `buf`. Le message doit avoir été validé.
+/// Encodes `msg` at the end of `buf`. The message must have been validated.
 pub(crate) fn encode(msg: &Message, offset: u64, timestamp: i64, buf: &mut Vec<u8>) {
     let start = buf.len();
     buf.extend_from_slice(&[0; LEN_SIZE + CRC_SIZE]);
@@ -162,20 +162,20 @@ fn put_bytes_i32(buf: &mut Vec<u8>, bytes: Option<&[u8]>) {
     }
 }
 
-/// Résultat de la lecture d'un enregistrement dans un flux d'octets.
+/// Result of reading a record from a byte stream.
 #[derive(Debug)]
 pub(crate) enum ReadOutcome {
-    /// Un enregistrement valide, et sa taille encodée.
+    /// A valid record, and its encoded size.
     Record(Record, usize),
-    /// Fin propre du flux, à une frontière d'enregistrement.
+    /// Clean end of the stream, on a record boundary.
     End,
-    /// Le flux s'arrête au milieu d'un enregistrement (écriture interrompue).
+    /// The stream stops in the middle of a record (interrupted write).
     Incomplete,
-    /// Octets invalides : longueur absurde, CRC faux, structure incohérente.
+    /// Invalid bytes: absurd length, wrong CRC, inconsistent structure.
     Corrupt(String),
 }
 
-/// Lit le prochain enregistrement de `r`.
+/// Reads the next record from `r`.
 pub(crate) fn read_record<R: Read>(r: &mut R) -> io::Result<ReadOutcome> {
     let mut len_buf = [0u8; LEN_SIZE];
     match read_full(r, &mut len_buf)? {
@@ -185,7 +185,7 @@ pub(crate) fn read_record<R: Read>(r: &mut R) -> io::Result<ReadOutcome> {
     }
     let len = u32::from_le_bytes(len_buf) as usize;
     if len < CRC_SIZE + MIN_BODY_SIZE || len + LEN_SIZE > MAX_RECORD_SIZE {
-        return Ok(ReadOutcome::Corrupt(format!("longueur invalide : {len}")));
+        return Ok(ReadOutcome::Corrupt(format!("invalid length: {len}")));
     }
 
     let mut frame = vec![0u8; len];
@@ -195,15 +195,15 @@ pub(crate) fn read_record<R: Read>(r: &mut R) -> io::Result<ReadOutcome> {
     let stored_crc = u32::from_le_bytes(frame[..CRC_SIZE].try_into().unwrap());
     let body = &frame[CRC_SIZE..];
     if crc32c::crc32c(body) != stored_crc {
-        return Ok(ReadOutcome::Corrupt("CRC invalide".into()));
+        return Ok(ReadOutcome::Corrupt("invalid CRC".into()));
     }
     Ok(match decode_body(body) {
         Some(record) => ReadOutcome::Record(record, len + LEN_SIZE),
-        None => ReadOutcome::Corrupt("structure invalide".into()),
+        None => ReadOutcome::Corrupt("invalid structure".into()),
     })
 }
 
-/// Lit jusqu'à remplir `buf` ou atteindre la fin du flux. Renvoie le nombre d'octets lus.
+/// Reads until `buf` is full or the end of the stream is reached. Returns the number of bytes read.
 fn read_full<R: Read>(r: &mut R, buf: &mut [u8]) -> io::Result<usize> {
     let mut filled = 0;
     while filled < buf.len() {
@@ -286,20 +286,20 @@ mod tests {
                 assert_eq!(size, buf.len());
                 rec
             }
-            other => panic!("attendu un enregistrement, obtenu {other:?}"),
+            other => panic!("expected a record, got {other:?}"),
         }
     }
 
     #[test]
     fn encode_decode_full_message() {
-        let msg = Message::new("cle", "valeur")
+        let msg = Message::new("key", "value")
             .header("trace-id", "abc")
-            .header("vide", "");
+            .header("empty", "");
         let rec = roundtrip(&msg);
         assert_eq!(rec.offset, 42);
         assert_eq!(rec.timestamp, 1_700_000_000_000);
-        assert_eq!(rec.key.as_deref(), Some(&b"cle"[..]));
-        assert_eq!(rec.value.as_deref(), Some(&b"valeur"[..]));
+        assert_eq!(rec.key.as_deref(), Some(&b"key"[..]));
+        assert_eq!(rec.value.as_deref(), Some(&b"value"[..]));
         assert_eq!(rec.headers, msg.headers);
     }
 
@@ -327,7 +327,7 @@ mod tests {
             let outcome = read_record(&mut &buf[..cut]).unwrap();
             assert!(
                 matches!(outcome, ReadOutcome::Incomplete),
-                "coupure à {cut} : {outcome:?}"
+                "cut at {cut}: {outcome:?}"
             );
         }
     }
@@ -335,14 +335,14 @@ mod tests {
     #[test]
     fn every_flipped_byte_is_detected() {
         let mut buf = Vec::new();
-        encode(&Message::new("k", "valeur"), 7, 0, &mut buf);
+        encode(&Message::new("k", "value"), 7, 0, &mut buf);
         for i in 0..buf.len() {
             let mut bad = buf.clone();
             bad[i] ^= 0xFF;
             let outcome = read_record(&mut bad.as_slice()).unwrap();
             assert!(
                 !matches!(outcome, ReadOutcome::Record(..)),
-                "octet {i} modifié non détecté"
+                "flipped byte {i} not detected"
             );
         }
     }

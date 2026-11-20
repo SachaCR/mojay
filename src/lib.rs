@@ -1,5 +1,5 @@
-//! Mojay : topics, partitions, offsets et consumer groups dans un dossier
-//! local, sans serveur. L'équivalent de SQLite pour Kafka.
+//! Mojay: topics, partitions, offsets and consumer groups in a local
+//! directory, with no server. The SQLite of Kafka.
 //!
 //! ```no_run
 //! use std::time::Duration;
@@ -9,7 +9,7 @@
 //! db.create_topic("orders", TopicConfig { partitions: 4, ..Default::default() })?;
 //!
 //! let mut producer = db.producer("orders")?;
-//! producer.send(&Message::new("client-42", "commande"))?;
+//! producer.send(&Message::new("client-42", "order"))?;
 //!
 //! let mut consumer = db.consumer("billing", &["orders"], ConsumerConfig::default())?;
 //! for record in consumer.poll(Duration::from_millis(500))? {
@@ -20,7 +20,7 @@
 //! ```
 
 #[cfg(not(unix))]
-compile_error!("Mojay ne cible que macOS et Linux en V1.");
+compile_error!("Mojay only targets macOS and Linux in V1.");
 
 mod db;
 mod durable;

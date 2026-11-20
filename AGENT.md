@@ -60,7 +60,9 @@ de démonstration de `demo/` (voir `demo/README.md`), qui n'utilisent que l'API 
 - Les commentaires expliquent le *pourquoi* (invariant, cas de crash, choix de
   conception), pas le *quoi*.
 - Chaque élément `pub` a un commentaire de doc `///`, avec ses erreurs possibles.
-- Langue : identifiants en anglais, commentaires et messages d'erreur en français.
+- Langue : tout le code est en anglais (identifiants, commentaires y compris la doc
+  `///`, messages d'erreur, sorties de la CLI et des programmes, README). Seule la
+  note de conception (`docs/conception.md`) reste en français.
 - Les constantes ont un nom : pas de nombre magique (`HEADER_SIZE`, pas `16`).
 
 ## 3. Fiabilité : ne jamais perdre ni mentir sur les données

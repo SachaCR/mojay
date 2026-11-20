@@ -1,9 +1,9 @@
-//! Fichiers de métadonnées `clé = valeur` (`mojay.toml`, `meta.toml`).
+//! `key = value` metadata files (`mojay.toml`, `meta.toml`).
 //!
-//! Le format est un petit sous-ensemble de TOML, valide pour tout outil TOML :
-//! une paire par ligne, des valeurs entières ou des chaînes entre guillemets,
-//! des commentaires `#` en début de ligne. Ce sous-ensemble suffit et évite
-//! une dépendance : la lecture est stricte, toute clé inconnue est une erreur.
+//! The format is a small subset of TOML, valid for any TOML tool:
+//! one pair per line, integer values or double-quoted strings,
+//! `#` comments at the start of a line. This subset is enough and avoids
+//! a dependency: parsing is strict, any unknown key is an error.
 
 use std::collections::BTreeMap;
 use std::fmt::Write;
@@ -17,7 +17,7 @@ pub(crate) enum Value {
     Str(String),
 }
 
-/// Le contenu d'un fichier de métadonnées.
+/// The contents of a metadata file.
 #[derive(Debug)]
 pub(crate) struct Meta {
     path: PathBuf,
@@ -25,7 +25,7 @@ pub(crate) struct Meta {
 }
 
 impl Meta {
-    /// Décode `text`, lu depuis `path` (utilisé dans les messages d'erreur).
+    /// Decodes `text`, read from `path` (used in error messages).
     pub(crate) fn parse(path: &Path, text: &str) -> Result<Self> {
         let mut values = BTreeMap::new();
         for (n, line) in text.lines().enumerate() {
@@ -33,17 +33,17 @@ impl Meta {
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
-            let invalid = |reason: &str| corrupt(path, format!("ligne {} : {reason}", n + 1));
+            let invalid = |reason: &str| corrupt(path, format!("line {}: {reason}", n + 1));
             let (key, raw) = line
                 .split_once('=')
-                .ok_or_else(|| invalid("« clé = valeur » attendu"))?;
+                .ok_or_else(|| invalid("expected \"key = value\""))?;
             let key = key.trim();
             if key.is_empty() || !key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
-                return Err(invalid("clé invalide"));
+                return Err(invalid("invalid key"));
             }
-            let value = parse_value(raw.trim()).ok_or_else(|| invalid("valeur invalide"))?;
+            let value = parse_value(raw.trim()).ok_or_else(|| invalid("invalid value"))?;
             if values.insert(key.to_string(), value).is_some() {
-                return Err(invalid("clé en double"));
+                return Err(invalid("duplicate key"));
             }
         }
         Ok(Self {
@@ -55,12 +55,12 @@ impl Meta {
     pub(crate) fn int(&self, key: &str) -> Result<u64> {
         match self.values.get(key) {
             Some(Value::Int(n)) => Ok(*n),
-            Some(Value::Str(_)) => Err(self.error(format!("« {key} » doit être un entier"))),
-            None => Err(self.error(format!("clé « {key} » manquante"))),
+            Some(Value::Str(_)) => Err(self.error(format!("\"{key}\" must be an integer"))),
+            None => Err(self.error(format!("missing key \"{key}\""))),
         }
     }
 
-    /// Comme [`int`](Self::int), pour une clé facultative.
+    /// Like [`int`](Self::int), for an optional key.
     pub(crate) fn opt_int(&self, key: &str) -> Result<Option<u64>> {
         match self.values.get(key) {
             None => Ok(None),
@@ -71,16 +71,16 @@ impl Meta {
     pub(crate) fn str(&self, key: &str) -> Result<&str> {
         match self.values.get(key) {
             Some(Value::Str(s)) => Ok(s),
-            Some(Value::Int(_)) => Err(self.error(format!("« {key} » doit être une chaîne"))),
-            None => Err(self.error(format!("clé « {key} » manquante"))),
+            Some(Value::Int(_)) => Err(self.error(format!("\"{key}\" must be a string"))),
+            None => Err(self.error(format!("missing key \"{key}\""))),
         }
     }
 
-    /// Refuse toute clé hors de `allowed` : une faute de frappe ne doit pas
-    /// être ignorée en silence.
+    /// Rejects any key not in `allowed`: a typo must not be
+    /// silently ignored.
     pub(crate) fn only(&self, allowed: &[&str]) -> Result<()> {
         match self.values.keys().find(|k| !allowed.contains(&k.as_str())) {
-            Some(unknown) => Err(self.error(format!("clé inconnue « {unknown} »"))),
+            Some(unknown) => Err(self.error(format!("unknown key \"{unknown}\""))),
             None => Ok(()),
         }
     }
@@ -92,17 +92,17 @@ impl Meta {
 
 fn parse_value(raw: &str) -> Option<Value> {
     if let Some(inner) = raw.strip_prefix('"').and_then(|r| r.strip_suffix('"')) {
-        // Pas d'échappement : les chaînes Mojay sont de simples mots.
+        // No escaping: Mojay strings are plain words.
         return (!inner.contains(['"', '\\'])).then(|| Value::Str(inner.to_string()));
     }
     raw.parse().ok().map(Value::Int)
 }
 
-/// Encode des paires, précédées d'un commentaire d'en-tête.
+/// Encodes pairs, preceded by a header comment.
 pub(crate) fn format(header: &str, entries: &[(&str, Value)]) -> String {
     let mut out = format!("# {header}\n");
     for (key, value) in entries {
-        // Écrire dans une String ne peut pas échouer.
+        // Writing to a String cannot fail.
         let _ = match value {
             Value::Int(n) => writeln!(out, "{key} = {n}"),
             Value::Str(s) => writeln!(out, "{key} = \"{s}\""),
@@ -137,7 +137,7 @@ mod tests {
     #[test]
     fn errors_are_reported_not_ignored() {
         assert!(parse("partitions 4").is_err());
-        assert!(parse("partitions = quatre").is_err());
+        assert!(parse("partitions = four").is_err());
         assert!(parse("a = 1\na = 2").is_err());
         let meta = parse("partitions = 4\npartition = 5").unwrap();
         assert!(meta.only(&["partitions"]).is_err());

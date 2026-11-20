@@ -1,5 +1,5 @@
-//! Le côté lecteur d'une partition : lecture seule, sans verrou, bornée par la
-//! limite de lecture publiée par le writer.
+//! The reader side of a partition: read-only, lock-free, bounded by the
+//! read limit published by the writer.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -10,15 +10,15 @@ use crate::error::{Error, Result};
 use crate::record::Record;
 use crate::segment::SegmentReader;
 
-/// Délai maximal avant de remarquer qu'un segment a été supprimé par la
-/// rétention. D'ici là, il reste lisible (le fichier ouvert survit à sa
-/// suppression) mais occupe encore de la place sur le disque.
+/// Maximum delay before noticing that a segment has been deleted by
+/// retention. Until then, it stays readable (the open file survives its
+/// deletion) but still takes up disk space.
 const DISK_CHECK_INTERVAL: Duration = Duration::from_millis(500);
 
 #[derive(Debug)]
 pub(crate) struct PartitionReader {
     dir: PathBuf,
-    /// Triés par offset de base. Vide tant que le writer n'a jamais ouvert la partition.
+    /// Sorted by base offset. Empty as long as the writer has never opened the partition.
     segments: Vec<SegmentReader>,
     last_disk_check: Instant,
 }
@@ -34,14 +34,14 @@ impl PartitionReader {
         Ok(reader)
     }
 
-    /// Premier offset disponible.
+    /// First available offset.
     pub(crate) fn start_offset(&self) -> u64 {
         self.segments.first().map_or(0, SegmentReader::base_offset)
     }
 
-    /// Lit les enregistrements à partir de `offset`, sans dépasser `max_bytes`
-    /// ni `read_limit`. Renvoie toujours au moins un enregistrement s'il en
-    /// existe un avant la limite.
+    /// Reads records starting from `offset`, without exceeding `max_bytes`
+    /// or `read_limit`. Always returns at least one record if one
+    /// exists before the limit.
     pub(crate) fn read(
         &mut self,
         offset: u64,
@@ -82,7 +82,7 @@ impl PartitionReader {
                 &mut out,
                 |i, req, out| segments[i].read(req, out),
             )?;
-            // La limite n'est pas atteinte : le writer a pu ouvrir de nouveaux segments.
+            // The limit has not been reached: the writer may have opened new segments.
             if stop == ReadStop::BudgetReached || !self.sync_with_disk()? {
                 break;
             }
@@ -90,14 +90,14 @@ impl PartitionReader {
         Ok(out)
     }
 
-    /// Met la liste des segments en accord avec le disque : oublie ceux que
-    /// la rétention a supprimés (leur fichier est alors vraiment libéré) et
-    /// ouvre ceux que le writer a créés. Renvoie `true` s'il y en avait de nouveaux.
+    /// Brings the segment list in line with the disk: forgets those that
+    /// retention deleted (their file is then actually freed) and
+    /// opens those the writer created. Returns `true` if there were new ones.
     fn sync_with_disk(&mut self) -> Result<bool> {
         self.last_disk_check = Instant::now();
         let bases = list_segment_bases(&self.dir)?;
-        // La rétention ne supprime que les plus anciens : tout ce qui précède
-        // le premier segment présent a disparu.
+        // Retention only deletes the oldest ones: everything before
+        // the first present segment is gone.
         if let Some(&first) = bases.first() {
             self.segments.retain(|s| s.base_offset() >= first);
         }
@@ -113,7 +113,7 @@ impl PartitionReader {
                     self.segments.push(segment);
                     found = true;
                 }
-                // Supprimé entre la liste du dossier et son ouverture.
+                // Deleted between listing the directory and opening it.
                 Err(Error::Io(e)) if e.kind() == io::ErrorKind::NotFound => {}
                 Err(e) => return Err(e),
             }

@@ -1,5 +1,5 @@
-//! Le côté lecteur d'un segment : lecture seule, sans verrou, sans jamais rien
-//! modifier, pendant qu'un autre processus peut être en train d'écrire.
+//! The reader side of a segment: read-only, lock-free, never modifying
+//! anything, while another process may be writing.
 
 use std::fs::{self, File};
 use std::io;
@@ -18,7 +18,7 @@ pub(crate) struct SegmentReader {
     log: File,
     log_path: PathBuf,
     index_path: PathBuf,
-    /// Copie de l'index, relue quand le fichier grandit.
+    /// Copy of the index, re-read when the file grows.
     index: SparseIndex,
     index_bytes_seen: u64,
     header_checked: bool,
@@ -42,12 +42,12 @@ impl SegmentReader {
         self.base_offset
     }
 
-    /// Lit les enregistrements demandés. Le fichier peut grandir entre deux
-    /// appels : sa taille est relue à chaque fois.
+    /// Reads the requested records. The file may grow between two
+    /// calls: its size is re-read every time.
     pub(crate) fn read(&mut self, req: &ReadRequest, out: &mut Vec<Record>) -> Result<SegmentRead> {
         let size = self.log.metadata()?.len();
         if size < HEADER_SIZE {
-            // Segment tout juste créé par le writer : rien à lire pour l'instant.
+            // Segment just created by the writer: nothing to read yet.
             return Ok(SegmentRead::Exhausted { taken: 0 });
         }
         if !self.header_checked {
@@ -62,8 +62,8 @@ impl SegmentReader {
         read_records(&self.log, &self.log_path, start, size, req, out)
     }
 
-    /// Relit l'index si son fichier a changé de taille. Un index absent ou
-    /// abîmé ne fait que ralentir la lecture : on repart alors du début.
+    /// Re-reads the index if its file has changed size. A missing or
+    /// damaged index only slows reading down: it then starts from the beginning.
     fn refresh_index(&mut self, log_size: u64) -> Result<()> {
         let len = match fs::metadata(&self.index_path) {
             Ok(meta) => meta.len(),

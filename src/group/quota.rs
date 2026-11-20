@@ -1,11 +1,11 @@
-//! Répartition des partitions entre les membres vivants d'un groupe.
-//! Logique pure, sans I/O.
+//! Distribution of partitions among the live members of a group.
+//! Pure logic, with no I/O.
 //!
-//! Avec P partitions et N membres, le membre de rang r (0 = le plus ancien)
-//! doit en posséder ⌊P / N⌋, plus une si r < P mod N. La somme des quotas vaut
-//! exactement P, et deux quotas diffèrent d'au plus un.
+//! With P partitions and N members, the member of rank r (0 = the oldest)
+//! must own ⌊P / N⌋ of them, plus one if r < P mod N. The quotas add up to
+//! exactly P, and two quotas differ by at most one.
 
-/// Nombre de partitions que doit posséder le membre de rang `rank`.
+/// Number of partitions the member of rank `rank` must own.
 pub(super) fn quota(partitions: usize, members: usize, rank: usize) -> usize {
     if members == 0 {
         return 0;
@@ -13,9 +13,9 @@ pub(super) fn quota(partitions: usize, members: usize, rank: usize) -> usize {
     partitions / members + usize::from(rank < partitions % members)
 }
 
-/// Indice de la première partition que le membre de rang `rank` tente de
-/// prendre : chaque membre part d'un endroit différent, pour limiter les
-/// collisions quand plusieurs cherchent des partitions libres en même temps.
+/// Index of the first partition the member of rank `rank` tries to
+/// take: each member starts from a different place, to limit
+/// collisions when several are looking for free partitions at the same time.
 pub(super) fn claim_start(partitions: usize, members: usize, rank: usize) -> usize {
     if members == 0 || partitions == 0 {
         return 0;
@@ -47,7 +47,7 @@ mod tests {
             (0..3).map(|r| quota(4, 3, r)).collect::<Vec<_>>(),
             vec![2, 1, 1]
         );
-        assert_eq!(quota(2, 5, 4), 0, "plus de membres que de partitions");
+        assert_eq!(quota(2, 5, 4), 0, "more members than partitions");
     }
 
     #[test]

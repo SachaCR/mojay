@@ -1,4 +1,4 @@
-//! Offsets commités par les groupes, pour l'outillage. Lecture seule.
+//! Offsets committed by groups, for tooling. Read-only.
 
 use std::fs;
 use std::io;
@@ -7,7 +7,7 @@ use std::path::Path;
 use super::{GroupPaths, offsets};
 use crate::error::Result;
 
-/// L'offset commité par un groupe pour une partition d'un topic.
+/// The offset committed by a group for a partition of a topic.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommittedOffset {
     pub group: String,
@@ -15,8 +15,8 @@ pub struct CommittedOffset {
     pub offset: u64,
 }
 
-/// Les offsets commités pour `topic` par tous les groupes, triés par groupe
-/// puis par partition. Un groupe qui n'a rien commité n'apparaît pas.
+/// The offsets committed for `topic` by all groups, sorted by group
+/// then by partition. A group that has committed nothing does not appear.
 pub(crate) fn committed_offsets(
     groups_dir: &Path,
     topic: &str,

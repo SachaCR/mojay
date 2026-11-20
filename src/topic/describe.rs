@@ -1,5 +1,5 @@
-//! Description d'un topic pour l'outillage (CLI, supervision) : configuration,
-//! partitions et segments. Lecture seule.
+//! Description of a topic for tooling (CLI, monitoring): configuration,
+//! partitions and segments. Read-only.
 
 use std::fs;
 use std::io;
@@ -9,7 +9,7 @@ use super::{TopicConfig, TopicReader, load_config, partition_dir};
 use crate::error::Result;
 use crate::log::{list_segment_bases, segment_log_path};
 
-/// Un topic tel qu'il est sur le disque.
+/// A topic as it is on disk.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TopicDescription {
     pub name: String,
@@ -17,26 +17,26 @@ pub struct TopicDescription {
     pub partitions: Vec<PartitionDescription>,
 }
 
-/// Une partition : ses offsets lisibles et ses segments.
+/// A partition: its readable offsets and its segments.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PartitionDescription {
     pub partition: u32,
-    /// Premier offset disponible.
+    /// First available offset.
     pub start_offset: u64,
-    /// Premier offset pas encore lisible : on peut lire `start_offset..read_limit`.
+    /// First offset not yet readable: `start_offset..read_limit` can be read.
     pub read_limit: u64,
-    /// Du plus ancien au plus récent ; le dernier est le segment actif.
+    /// From oldest to most recent; the last one is the active segment.
     pub segments: Vec<SegmentDescription>,
 }
 
 impl PartitionDescription {
-    /// Taille totale des segments sur le disque, index non compris.
+    /// Total size of the segments on disk, indexes excluded.
     pub fn size_bytes(&self) -> u64 {
         self.segments.iter().map(|s| s.size_bytes).sum()
     }
 }
 
-/// Un fichier de segment.
+/// A segment file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SegmentDescription {
     pub base_offset: u64,
@@ -74,7 +74,7 @@ fn segments(dir: &Path) -> Result<Vec<SegmentDescription>> {
                 path,
                 size_bytes: meta.len(),
             }),
-            // Supprimé par la rétention entre la liste et la lecture.
+            // Deleted by retention between listing and reading.
             Err(e) if e.kind() == io::ErrorKind::NotFound => {}
             Err(e) => return Err(e.into()),
         }

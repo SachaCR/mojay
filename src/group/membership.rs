@@ -1,14 +1,14 @@
-//! Appartenance à un groupe : chaque membre vivant tient le verrou de son
-//! fichier `members/<id>.lock`.
+//! Group membership: each live member holds the lock on its
+//! `members/<id>.lock` file.
 //!
-//! - **Vivant** : un membre est vivant tant que quelqu'un tient le verrou de son
-//!   fichier. Un processus qui meurt perd ses verrous instantanément : pas de
-//!   heartbeat, pas de délai d'expiration.
-//! - **Inscription sans course** : le fichier est créé sous un nom temporaire,
-//!   verrouillé, puis renommé dans `members/`. Le verrou suit l'inode : personne
-//!   ne voit jamais ce fichier sans verrou et ne le prend pour celui d'un mort.
-//! - **Rang** : les identifiants commencent par l'instant d'inscription, donc
-//!   l'ordre alphabétique place les membres les plus anciens en premier.
+//! - **Live**: a member is alive as long as someone holds the lock on its
+//!   file. A process that dies loses its locks instantly: no
+//!   heartbeat, no expiry timeout.
+//! - **Race-free registration**: the file is created under a temporary name,
+//!   locked, then renamed into `members/`. The lock follows the inode: nobody
+//!   ever sees this file unlocked and mistakes it for a dead member's.
+//! - **Rank**: identifiers start with the registration time, so
+//!   alphabetical order puts the oldest members first.
 
 use std::fs;
 use std::io;
@@ -22,10 +22,10 @@ use crate::lock::{FileLock, Probe};
 
 const LOCK_SUFFIX: &str = ".lock";
 
-/// Distingue les membres créés dans le même processus à la même nanoseconde.
+/// Distinguishes members created in the same process in the same nanosecond.
 static NEXT_LOCAL_ID: AtomicU64 = AtomicU64::new(0);
 
-/// L'inscription de ce consumer dans un groupe. Elle dure tant que la valeur vit.
+/// This consumer's registration in a group. It lasts as long as the value lives.
 #[derive(Debug)]
 pub(super) struct Membership {
     id: String,
@@ -35,7 +35,7 @@ pub(super) struct Membership {
 }
 
 impl Membership {
-    /// Inscrit un nouveau membre dans le groupe dont `group_dir` est le dossier.
+    /// Registers a new member in the group whose directory is `group_dir`.
     pub(super) fn join(group_dir: &Path) -> Result<Self> {
         let members_dir = group_dir.join("members");
         fs::create_dir_all(&members_dir)?;
@@ -48,11 +48,10 @@ impl Membership {
             NEXT_LOCAL_ID.fetch_add(1, Ordering::Relaxed)
         );
 
-        // Préparé hors de `members/`, puis renommé une fois verrouillé.
+        // Prepared outside `members/`, then renamed once locked.
         let joining = group_dir.join(format!(".joining-{id}"));
-        let lock = FileLock::try_exclusive(&joining)?.ok_or_else(|| {
-            io::Error::other(format!("fichier d'inscription {id} déjà verrouillé"))
-        })?;
+        let lock = FileLock::try_exclusive(&joining)?
+            .ok_or_else(|| io::Error::other(format!("membership file {id} already locked")))?;
         let path = members_dir.join(format!("{id}{LOCK_SUFFIX}"));
         fs::rename(&joining, &path)?;
         sync_dir(&members_dir)?;
@@ -68,8 +67,8 @@ impl Membership {
         &self.id
     }
 
-    /// Les identifiants des membres vivants, triés du plus ancien au plus
-    /// récent, ce membre compris. Les fichiers des membres morts sont supprimés.
+    /// The identifiers of the live members, sorted from oldest to most
+    /// recent, this member included. The files of dead members are deleted.
     pub(super) fn living_members(&self) -> Result<Vec<String>> {
         let mut living = vec![self.id.clone()];
         for entry in fs::read_dir(&self.members_dir)? {
@@ -93,8 +92,8 @@ impl Membership {
 }
 
 impl Drop for Membership {
-    /// Départ propre : le fichier disparaît avant que le verrou ne soit relâché.
-    /// Sans cela, les autres le supprimeraient eux-mêmes en le voyant libre.
+    /// Clean departure: the file disappears before the lock is released.
+    /// Otherwise, the others would delete it themselves upon seeing it free.
     fn drop(&mut self) {
         let _ = remove_if_present(&self.path);
     }
@@ -134,7 +133,7 @@ mod tests {
     fn dead_member_file_is_cleaned_up() {
         let dir = tempfile::TempDir::new().unwrap();
         let alive = Membership::join(dir.path()).unwrap();
-        // Un membre mort laisse son fichier, sans verrou.
+        // A dead member leaves its file behind, unlocked.
         let dead = dir.path().join("members/000-dead-0.lock");
         fs::write(&dead, b"").unwrap();
         assert_eq!(

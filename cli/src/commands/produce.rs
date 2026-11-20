@@ -1,4 +1,4 @@
-//! `mojay produce` : envoie un message, ou une ligne de l'entrée standard par message.
+//! `mojay produce`: sends a message, or one message per line of standard input.
 
 use std::io::{BufRead, Write};
 use std::path::Path;
@@ -10,20 +10,20 @@ use crate::parse;
 
 #[derive(Debug, clap::Args)]
 pub struct Args {
-    /// Le topic où envoyer.
+    /// The topic to send to.
     pub topic: String,
-    /// Valeur du message. Sans valeur, chaque ligne de l'entrée standard est un message.
+    /// Message value. Without a value, each line of standard input is a message.
     pub value: Option<String>,
-    /// Clé du message : elle détermine la partition (murmur2, comme Kafka).
+    /// Message key: determines the partition (murmur2, like Kafka).
     #[arg(long, short)]
     pub key: Option<String>,
-    /// Partition imposée, au lieu de celle choisie d'après la clé.
+    /// Force this partition instead of the one chosen from the key.
     #[arg(long, short)]
     pub partition: Option<u32>,
-    /// Header « clé=valeur ». Répétable.
+    /// A key=value header. Repeatable.
     #[arg(long = "header", short = 'H', value_parser = parse::header)]
     pub headers: Vec<(String, String)>,
-    /// N'affiche pas la partition et l'offset de chaque message.
+    /// Do not print the partition and offset of each message.
     #[arg(long, short)]
     pub quiet: bool,
 }
