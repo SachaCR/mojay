@@ -71,7 +71,7 @@ fn partition_dir(topic_dir: &Path, partition: u32) -> PathBuf {
     topic_dir.join(format!("p{partition}"))
 }
 
-/// Vérifie qu'un nom de topic est utilisable comme nom de dossier, partout.
+/// Vérifie qu'un nom de topic ou de groupe est utilisable comme nom de dossier, partout.
 pub(crate) fn validate_name(name: &str) -> Result<()> {
     let invalid = |reason: &str| Error::InvalidName {
         name: name.to_string(),

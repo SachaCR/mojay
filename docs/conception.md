@@ -107,10 +107,10 @@ Un topic accepte autant de consumers que voulu, sans aucun verrou en lecture. Le
 
 - **Lecture** : les segments sont lus par `pread`, par gros blocs. Le `mmap` ne sert qu'au fichier `read_limits`. Aucune lecture ne dépasse la limite de lecture. Le log est append-only, donc lire pendant une écriture est sûr.
 - **Écriture en cours** : juste après la limite de lecture, le writer peut être en train d'écrire. Un enregistrement illisible à cet endroit n'est donc pas une erreur ; avant la limite, c'en est une. Le lecteur ne répare jamais rien, et découvre seul les nouveaux segments.
-- **Consumer seul** : un groupe à un membre, qui reçoit donc toutes les partitions. Si un second processus ouvre le même nom, il rejoint le groupe et les partitions se répartissent entre eux, comme dans Kafka.
-- **Offsets** : `groups/<group>/offsets/<topic>-<p>` contient un `u64` et un CRC. Le commit est manuel, ou automatique à intervalle régulier.
-- **Point de départ** : sans offset commité, on part du début (`Earliest`) ou de la fin (`Latest`).
-- **Offset disparu** : si la rétention a supprimé l'offset demandé, la même politique s'applique, ou une erreur si l'appelant le préfère.
+- **Consumer seul** : un groupe à un membre, qui reçoit donc toutes les partitions. Depuis l'étape 3, un second membre du même groupe attend et reprend les partitions dès qu'elles se libèrent (arrêt ou crash du premier). À l'étape 4, les membres vivants se les répartiront, comme dans Kafka.
+- **Offsets** : `groups/<group>/offsets/<topic>-<p>` fait 12 octets : l'offset (`u64`) puis son CRC32C (`u32`). Il n'est écrit que par le détenteur du verrou de la partition. Le commit est manuel (`commit()`), ou automatique : au plus tôt à l'intervalle choisi, au début de chaque `poll` et à la fermeture. Les messages rendus par un `poll` sont alors considérés comme traités au `poll` suivant.
+- **Point de départ** : sans offset commité, on part du début (`Earliest`) ou de la fin (`Latest`). Un offset commité au-delà de la limite de lecture (messages perdus avec `fsync` `Never` ou `Interval`) est ramené à la limite, pour ne sauter aucun nouveau message.
+- **Offset disparu** : si la rétention a supprimé l'offset demandé, la même politique s'applique.
 - **Attente de nouveaux messages** : en V1, un polling adaptatif de la limite de lecture en mémoire partagée, de 1 ms à 50 ms selon l'activité. Le coût est négligeable, car c'est une simple lecture mémoire.
 
 `inotify` et `kqueue` ne signalent pas les écritures faites via `mmap`. Une notification événementielle demandera donc un canal séparé, à étudier après la V1.
@@ -149,10 +149,10 @@ flowchart LR
 L'API est synchrone en V1, avec trois points d'entrée : `Db`, `Producer` et `Consumer`. Une variante async pourra venir derrière une feature Cargo.
 
 ```rust
-use mojay::{Db, Options, TopicConfig, Message, StartFrom};
+use mojay::{ConsumerConfig, Db, Message, StartFrom, TopicConfig};
 use std::time::Duration;
 
-let db = Db::open("./data", Options::default())?;
+let db = Db::open("./data")?;
 db.create_topic("orders", TopicConfig { partitions: 4, ..Default::default() })?;
 
 // Producteur : prend le verrou writer du topic, Err(Busy) si déjà pris
@@ -161,7 +161,8 @@ let (partition, offset) = producer.send(&Message::new(b"cmd-42", b"{...}"))?;
 producer.flush()?;
 
 // Consumer : rejoint le groupe "billing", seul dedans s'il est le seul processus
-let mut consumer = db.consumer("billing", &["orders"], StartFrom::Earliest)?;
+let config = ConsumerConfig { start_from: StartFrom::Earliest, ..Default::default() };
+let mut consumer = db.consumer("billing", &["orders"], config)?;
 loop {
     for rec in consumer.poll(Duration::from_millis(500))? {
         println!("{} / {} : {:?}", rec.partition, rec.offset, rec.value);
@@ -207,21 +208,14 @@ Le MVP se construit de bas en haut. Chaque étape est testable seule, en commen�
 
 1. ✅ Log d'une partition : format, segments, index, récupération. Tests de crash par troncature à chaque octet de la fin du log.
 2. ✅ Topics, writer verrouillé et limites de lecture partagées. Tests multi-processus : second writer refusé, writer tué en pleine écriture, lecteur qui suit un writer d'un autre processus.
-3. Consumer seul : lecture et offsets commités, avec des tests multi-processus.
+3. ✅ Consumer seul : lecture et offsets commités, commit manuel ou automatique, relais vers un second membre à l'arrêt ou au crash du premier. Tests multi-processus : membre tué, reprise exacte au dernier commit.
 4. Consumer groups à plusieurs membres.
 5. Rétention par taille et par durée.
-6. CLI `mojay` pour déboguer : `create-topic`, `produce`, `tail`, `describe`.
+6. CLI `mojay` pour déboguer : `create-topic`, `produce`, `tail`, `describe`, et `dump`, qui affiche un segment en texte (offsets, positions, CRC, clés, valeurs) pour vérifier à l'œil ce qui est stocké.
 7. ABI C, puis un premier binding Python.
 
 Après la V1 : index temporel (positionnement par timestamp), compression, compaction par clé, notification événementielle, couche protocole Kafka.
 
-**Idées à étudier**
-
-- **Voir les messages en texte, pour déboguer** : pouvoir vérifier à l'œil ce qui est stocké. Deux pistes :
-    - un mode de stockage texte (une ligne lisible par enregistrement), activé par topic ;
-    - garder le format binaire, et ajouter une commande `mojay dump` qui affiche un segment en texte (offsets, positions, CRC, clés, valeurs).
-
-  La seconde piste semble préférable : un seul format à fiabiliser (récupération, CRC, valeurs binaires quelconques), et le dump fonctionne aussi sur les données de production. Elle s'intègre à la CLI de l'étape 6.
 
 ## Décisions
 
@@ -233,3 +227,5 @@ Après la V1 : index temporel (positionnement par timestamp), compression, compa
 | Lecture des segments | `pread` ; `mmap` seulement pour `read_limits` |
 | Écriture | Un writer par topic |
 | Windows | Hors périmètre de la V1 |
+| Voir les messages en texte | `mojay dump` (étape 6) plutôt qu'un second format de stockage : un seul format à fiabiliser |
+| Commit par défaut | Manuel ; automatique sur demande (`auto_commit`) |

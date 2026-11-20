@@ -4,6 +4,7 @@
 //! data/
 //!   mojay.toml     # version du format
 //!   topics/<topic>/...
+//!   groups/<group>/...
 //! ```
 
 use std::fs;
@@ -12,11 +13,13 @@ use std::path::{Path, PathBuf};
 
 use crate::durable::write_atomic;
 use crate::error::{Error, Result, corrupt};
+use crate::group::{Consumer, ConsumerConfig};
 use crate::meta::{self, Meta, Value};
 use crate::topic::{self, Producer, TopicConfig, TopicReader};
 
 const META_FILE: &str = "mojay.toml";
 const TOPICS_DIR: &str = "topics";
+const GROUPS_DIR: &str = "groups";
 const FORMAT_VERSION: u64 = 1;
 
 /// Un dossier de données Mojay, l'équivalent du fichier d'une base SQLite.
@@ -35,6 +38,7 @@ impl Db {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let root = path.as_ref().to_path_buf();
         fs::create_dir_all(root.join(TOPICS_DIR))?;
+        fs::create_dir_all(root.join(GROUPS_DIR))?;
         let meta_path = root.join(META_FILE);
         match fs::read_to_string(&meta_path) {
             Ok(text) => check_format(&meta_path, &text)?,
@@ -79,6 +83,24 @@ impl Db {
     /// Ouvre un lecteur d'un topic. Il n'y a pas de limite au nombre de lecteurs.
     pub fn reader(&self, topic: &str) -> Result<TopicReader> {
         TopicReader::open(&self.existing_topic_dir(topic)?, topic)
+    }
+
+    /// Ouvre un consumer du groupe `group`, abonné à `topics`.
+    ///
+    /// Un consumer seul est l'unique membre d'un groupe à son nom. Il reprend
+    /// chaque partition à l'offset commité par le groupe, ou selon
+    /// [`ConsumerConfig::start_from`] s'il n'y en a pas.
+    pub fn consumer(
+        &self,
+        group: &str,
+        topics: &[&str],
+        config: ConsumerConfig,
+    ) -> Result<Consumer> {
+        let readers = topics
+            .iter()
+            .map(|topic| self.reader(topic))
+            .collect::<Result<_>>()?;
+        Consumer::open(&self.root.join(GROUPS_DIR), group, readers, config)
     }
 
     fn topics_dir(&self) -> PathBuf {

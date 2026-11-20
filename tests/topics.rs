@@ -3,105 +3,35 @@
 //! Les tests multi-processus relancent ce même binaire de test dans un
 //! processus enfant (voir `child_process`), qui joue un scénario donné.
 
-use std::env;
+#[allow(dead_code)]
+mod common;
+
 use std::fs::{self, OpenOptions};
 use std::os::unix::fs::FileExt;
-use std::path::Path;
-use std::process::{Child, Command, Stdio};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use mojay::{Db, Error, FsyncPolicy, LogConfig, Message, Record, TopicConfig};
+use common::{ALL, config, message, new_db, run_child, spawn_child, wait_until};
+use mojay::{Db, Error, FsyncPolicy, Message, Record, TopicConfig};
 use tempfile::TempDir;
 
-const ALL: usize = usize::MAX;
-const CHILD_SCENARIO: &str = "MOJAY_TEST_CHILD_SCENARIO";
-const CHILD_DIR: &str = "MOJAY_TEST_CHILD_DIR";
 const STREAM_LEN: u64 = 3000;
-
-fn message(i: u64) -> Message {
-    Message::new(format!("k{i}"), format!("valeur-{i}-{}", "x".repeat(64)))
-}
 
 fn assert_is_message(rec: &Record, i: u64) {
     assert_eq!(rec.offset, i);
     assert_eq!(rec.value, message(i).value, "contenu de l'offset {i}");
 }
 
-fn config(partitions: u32, segment_max_bytes: u64, fsync: FsyncPolicy) -> TopicConfig {
-    TopicConfig {
-        partitions,
-        log: LogConfig {
-            segment_max_bytes,
-            index_interval_bytes: 256,
-            fsync,
-        },
-    }
-}
-
-fn new_db() -> (TempDir, Db) {
-    let dir = TempDir::new().unwrap();
-    let db = Db::open(dir.path()).unwrap();
-    (dir, db)
-}
-
-/// Attend qu'une condition devienne vraie, ou échoue après `timeout`.
-fn wait_until(timeout: Duration, mut condition: impl FnMut() -> bool) {
-    let deadline = Instant::now() + timeout;
-    while !condition() {
-        assert!(Instant::now() < deadline, "délai dépassé");
-        thread::sleep(Duration::from_millis(5));
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Processus enfant
 // ---------------------------------------------------------------------------
 
-fn child_command(scenario: &str, dir: &Path) -> Command {
-    let mut cmd = Command::new(env::current_exe().unwrap());
-    cmd.args([
-        "child_process",
-        "--exact",
-        "--nocapture",
-        "--test-threads=1",
-    ])
-    .env(CHILD_SCENARIO, scenario)
-    .env(CHILD_DIR, dir)
-    .stdout(Stdio::piped())
-    .stderr(Stdio::piped());
-    cmd
-}
-
-/// Lance un scénario enfant, attend sa fin, et renvoie sa ligne `RESULT:`.
-fn run_child(scenario: &str, dir: &Path) -> String {
-    let output = child_command(scenario, dir).output().unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        output.status.success(),
-        "l'enfant « {scenario} » a échoué :\n{stdout}\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    // La sortie du harnais de test peut précéder le résultat sur la même ligne.
-    stdout
-        .split("RESULT:")
-        .nth(1)
-        .and_then(|rest| rest.split_whitespace().next())
-        .unwrap_or_else(|| panic!("pas de résultat dans :\n{stdout}"))
-        .to_string()
-}
-
-fn spawn_child(scenario: &str, dir: &Path) -> Child {
-    child_command(scenario, dir).spawn().unwrap()
-}
-
 /// Point d'entrée des processus enfants. Ne fait rien dans un test normal.
 #[test]
 fn child_process() {
-    let Ok(scenario) = env::var(CHILD_SCENARIO) else {
+    let Some((scenario, db)) = common::child_scenario() else {
         return;
     };
-    let db = Db::open(env::var(CHILD_DIR).unwrap()).unwrap();
     match scenario.as_str() {
         "try_producer" => match db.producer("orders") {
             Ok(_) => println!("RESULT:ok"),
