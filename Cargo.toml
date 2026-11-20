@@ -1,0 +1,11 @@
+[package]
+name = "mojay"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+crc32c = "0.6.9"
+thiserror = "2.0.21"
+
+[dev-dependencies]
+tempfile = "3.27.0"
