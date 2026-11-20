@@ -6,7 +6,8 @@
 //!   meta.toml          # number of partitions and log configuration
 //!   partitions.state   # per partition: read limit and writer state, shared via mmap
 //!   p0/ p1/ ...        # one PartitionLog per partition
-//!     write.lock       # flock taken by a writer for each batch of messages
+//!     write.lock       # flock taken by a writer while it writes a batch
+//!     flush.lock       # flock taken while flushing to disk (group commit)
 //! ```
 //!
 //! - [`Producer`]: a writer. Any number of them, in any process: they take
@@ -37,6 +38,8 @@ use crate::partition_state;
 const META_FILE: &str = "meta.toml";
 const STATE_FILE: &str = "partitions.state";
 const WRITE_LOCK_FILE: &str = "write.lock";
+/// Taken by `Always` producers while flushing to disk (group commit).
+const FLUSH_LOCK_FILE: &str = "flush.lock";
 /// Version 2: several writers per topic, `partitions.state` instead of `read_limits`.
 const META_FORMAT_VERSION: u64 = 2;
 const MAX_PARTITIONS: u32 = 10_000;

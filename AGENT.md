@@ -39,7 +39,8 @@ Modules de support, chacun avec une seule responsabilité :
 
 La CLI est une crate séparée du workspace : ses dépendances (`clap`) ne sont pas
 imposées aux utilisateurs de la bibliothèque. Il en va de même pour les programmes
-de démonstration de `demo/` (voir `demo/README.md`), qui n'utilisent que l'API publique.
+de démonstration de `demo/` (voir `demo/README.md`) et des benchmarks de `bench/`
+(voir `bench/README.md`), qui n'utilisent que l'API publique.
 
 - Un module expose le minimum : `pub(crate)` par défaut, `pub` seulement pour l'API publique.
 - La logique pure (calculs, encodage, quotas d'un groupe) est séparée des effets

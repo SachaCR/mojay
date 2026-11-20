@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "cli", "demo/producer", "demo/consumer", "bindings/node"]
+members = [".", "cli", "demo/producer", "demo/consumer", "bindings/node", "bench"]
 
 [package]
 name = "mojay"

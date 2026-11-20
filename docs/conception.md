@@ -48,7 +48,8 @@ data/
     meta.toml                      # nombre de partitions, rétention, politique fsync
     partitions.state               # état partagé de chaque partition, en mmap
     p0/
-      write.lock                   # flock pris par un writer pour chaque lot
+      write.lock                   # flock pris par un writer pour écrire un lot
+      flush.lock                   # flock pris pour le fsync partagé (group commit)
       00000000000000000000.log     # segment, nommé par son premier offset
       00000000000000000000.idx     # index clairsemé offset -> position
     p1/ ...
@@ -85,13 +86,14 @@ Chaque partition est une suite de segments append-only. Chaque enregistrement po
 
 | Champ | Rôle |
 | --- | --- |
-| `read_limit` | La limite de lecture. Publiée en dernier, avec *Release* ; les lecteurs la lisent avec *Acquire*, sans appel système. |
+| `read_limit` | La limite de lecture : tout offset en dessous est écrit et, avec `Always`, sur le disque. Avancée avec *Release*, sans jamais reculer (sauf réparation) ; les lecteurs la lisent avec *Acquire*, sans appel système. |
 | `end_position` | Nombre d'octets valides du segment actif. |
 | `active_base` | Base du segment actif. |
 | `start_offset` | Premier offset disponible. |
 | `dirty` | Non nul pendant qu'un writer modifie les fichiers de la partition. |
+| `next_offset` | Prochain offset à attribuer : tout ce qui est en dessous est écrit dans les fichiers, pas forcément sur le disque. Publié en dernier, avec *Release*. |
 
-Les lecteurs n'utilisent que `read_limit`. Les writers lisent et publient le reste, toujours sous le verrou d'écriture de la partition.
+Les lecteurs n'utilisent que `read_limit`. Les writers publient le reste sous le verrou d'écriture de la partition ; `read_limit` avance après, hors de ce verrou (voir *group commit*).
 
 ## Plusieurs writers : un verrou d'écriture par partition
 
@@ -101,15 +103,24 @@ Autant de producteurs que voulu, dans n'importe quels processus, peuvent écrire
 2. **Rattrapage** : le producteur lit l'état de la partition dans `partitions.state`, publié par le writer précédent, et met sa vue à jour : nouvelle fin du segment actif, entrées d'index ajoutées, segments supprimés par la rétention. Cas normal : quelques comparaisons et un `fstat`.
 3. **Réouverture si besoin** : si un autre writer a ouvert un nouveau segment, si la longueur du fichier ne correspond pas à l'état publié, ou si `dirty` est resté levé (un writer est mort au milieu d'un changement), la partition est rouverte depuis le disque, avec la réparation habituelle de la fin.
 4. **Marquage** : `dirty` est levé avant de toucher au moindre fichier.
-5. **Ajout** : choix de la partition (imposée, sinon murmur2 sur la clé comme Kafka, sinon round-robin), écriture, index, politique de `fsync`, rotation et rétention si besoin.
-6. **Publication** : la fin du segment actif, sa base et le premier offset, puis `dirty` remis à zéro, puis la limite de lecture en dernier.
-7. **Libération du verrou**, par `LOCK_UN` explicite.
+5. **Ajout** : choix de la partition (imposée, sinon murmur2 sur la clé comme Kafka, sinon round-robin), écriture, index, rotation et rétention si besoin. Pas de `fsync` ici, sauf celui du segment scellé par une rotation.
+6. **Publication** : la fin du segment actif, sa base et le premier offset, puis `dirty` remis à zéro, puis `next_offset` en dernier.
+7. **Libération du verrou**, par `LOCK_UN` explicite. Le verrou n'a été tenu que quelques microsecondes.
+8. **Rendre lisible** : avec `Interval` ou `Never`, la limite de lecture avance tout de suite jusqu'à la fin du lot. Avec `Always`, c'est le *group commit* ci-dessous.
 
-L'ouverture d'un producteur répare chaque partition sous son verrou, comme avant : c'est ce qui protège d'un état partagé périmé après un redémarrage de la machine.
+**Group commit** (`Always`). Un `fsync` rend durable tout ce qui a été écrit dans le fichier avant lui, par n'importe quel writer. Les writers partagent donc les `fsync`, sous un second verrou par partition (`p<N>/flush.lock`) :
+
+1. prendre le verrou de flush ;
+2. si `read_limit` couvre déjà la fin de son lot, un `fsync` commencé après son écriture l'a rendu durable : rien à faire ;
+3. sinon, lire `next_offset`, *puis* la base du segment actif, faire `fsync` de ce segment, et avancer `read_limit` jusqu'à ce `next_offset` (`fetch_max`) : un seul `fsync` couvre les lots de tous les writers qui attendaient.
+
+Les segments précédents ont été synchronisés à leur scellement : un `next_offset` lu avant la base du segment est donc couvert. Un envoi ne répond, et ses messages ne deviennent lisibles, qu'une fois sur le disque, comme avant. Le verrou d'écriture ne sert plus qu'à écrire : avec 4 writers, ils se partagent les `fsync` au lieu de les enchaîner.
+
+L'ouverture d'un producteur répare chaque partition sous son verrou, comme avant : c'est ce qui protège d'un état partagé périmé après un redémarrage de la machine. Avec `Always`, elle fait un `fsync` du segment actif, puis place la limite de lecture à la fin du log : des messages écrits par un writer mort avant son `fsync` deviennent lisibles, une fois durables.
 
 **Ordre** : les offsets d'une partition suivent l'ordre de prise du verrou ; les messages d'un même producteur gardent l'ordre des appels ; ceux de producteurs différents s'entremêlent dans le temps.
 
-**Crash d'un writer** : l'OS libère son verrou, le writer suivant voit `dirty` levé et répare la partition. Un enregistrement complet écrit juste avant le crash est conservé, même si l'envoi n'avait pas encore répondu (*at-least-once*).
+**Crash d'un writer** : l'OS libère ses verrous, le writer suivant voit `dirty` levé et répare la partition. Un enregistrement complet écrit juste avant le crash est conservé, même si l'envoi n'avait pas encore répondu (*at-least-once*). S'il est mort entre son écriture et son `fsync`, le prochain `fsync` d'un autre writer couvre aussi ses messages.
 
 **Rétention**, configurée par topic (`retention_bytes` et `retention_ms` dans `meta.toml`) :
 
@@ -123,7 +134,7 @@ L'ouverture d'un producteur répare chaque partition sous son verrou, comme avan
 
 | Politique `fsync` | Quand | Survit à un crash du processus | Survit à une coupure de courant |
 | --- | --- | --- | --- |
-| `Always` | Avant chaque publication de la limite de lecture (par défaut) | Oui | Oui |
+| `Always` | Avant chaque avancée de la limite de lecture, partagé entre writers (par défaut) | Oui | Oui |
 | `Interval(ms)` | Périodiquement, par un thread dédié | Oui | Sauf la dernière fenêtre |
 | `Never` | Laissé à l'OS | Oui | Non garanti |
 
@@ -238,6 +249,25 @@ Mojay garantit l'ordre par partition et une livraison at-least-once, sur une seu
 - Sous Windows (hors V1), on ne peut pas supprimer un segment encore ouvert par un lecteur : la rétention devra y être différée.
 - Les timestamps viennent de l'horloge du producteur, sans garantie de monotonie.
 
+## Performances mesurées
+
+Mesures du 20 novembre 2026 sur un Mac M5 (SSD interne, APFS), en release, avec le *group commit* ; le détail et la méthode sont dans [`bench/README.md`](../bench/README.md).
+
+| Cas | Débit |
+| --- | --- |
+| `always`, un message par envoi | ~300 msg/s (un `F_FULLFSYNC` de 3 à 5 ms par envoi) |
+| `always`, lots de 100 | ~27 000 msg/s |
+| `always`, 4 writers sur une partition | ~580 msg/s, p99 de 11,5 ms |
+| `interval` ou `never`, un message par envoi | ~250 000 à 450 000 msg/s |
+| `interval` ou `never`, lots de 100 | ~5 à 6 millions msg/s |
+| Lecture brute / par un consumer group | ~5 à 15 / ~5 à 9 millions msg/s |
+
+Constats :
+
+- `always` est borné par le vidage du disque ; les lots l'amortissent.
+- Avant le *group commit*, le `fsync` se faisait sous le verrou d'écriture : 4 writers n'allaient pas plus vite qu'un seul, et `flock` n'étant pas équitable, le p99 atteignait 0,8 s. Depuis, ils partagent les `fsync` : débit multiplié par 3,5, p99 de 11,5 ms.
+- Un envoi ne fait plus de `fsync` de l'index : c'est un cache, reconstruit depuis le `.log`.
+
 ## Feuille de route
 
 Le MVP se construit de bas en haut. Chaque étape est testable seule, en commençant par le log d'une partition.
@@ -261,7 +291,8 @@ Le MVP se construit de bas en haut. Chaque étape est testable seule, en commen�
     Le dossier vient de `--data` ou de `MOJAY_DATA`. Seule `create-topic` crée un dossier de données : une faute de frappe ne doit pas en créer un vide ailleurs.
 7. ✅ Binding Node.js (`bindings/node`), avec napi-rs plutôt qu'une ABI C : appels directs à la bibliothèque, mémoire gérée par napi-rs, définitions TypeScript générées. Chaque producteur et chaque consumer a son propre thread et une file de tâches : `send`, `poll` et `commit` renvoient des Promises, s'exécutent dans l'ordre des appels, et ne bloquent ni la boucle d'événements ni le pool de threads de Node. Les erreurs sont des `Error` avec un `code` stable (`MOJAY_UNKNOWN_TOPIC`…).
 8. ✅ Plusieurs producteurs par topic, dans plusieurs processus et sur la même partition : un verrou d'écriture par partition, pris pour chaque lot, et un état partagé (`partitions.state`) qui permet à chaque writer de rattraper les autres. Format de topic v2.
-9. Plus tard, selon les besoins : une ABI C (pour Go, C++…) et un binding Python (PyO3).
+9. ✅ Benchmarks (`bench/`) et *group commit* : le `fsync` hors du verrou d'écriture, partagé par les writers concurrents.
+10. Plus tard, selon les besoins : une ABI C (pour Go, C++…) et un binding Python (PyO3).
 
 Après la V1 : index temporel (positionnement par timestamp), compression, compaction par clé, notification événementielle, couche protocole Kafka.
 

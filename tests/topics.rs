@@ -308,9 +308,95 @@ fn read_limit_follows_the_log_after_recovery() {
     assert_eq!(reader.read(0, 0, ALL).unwrap().len(), 5);
 }
 
+/// A writer that died after writing its messages but before flushing them
+/// left the read limit behind `next_offset`: the next flush covers them too.
+#[test]
+fn next_flush_covers_messages_of_a_writer_that_died_before_its_own() {
+    let (dir, db) = new_db();
+    db.create_topic("orders", config(1, 1 << 20, FsyncPolicy::Always))
+        .unwrap();
+    let mut producer = db.producer("orders").unwrap();
+    for i in 0..10 {
+        producer.send_to(0, &message(i)).unwrap();
+    }
+    poke_state(dir.path(), "orders", READ_LIMIT_FIELD, 4);
+    let mut reader = db.reader("orders").unwrap();
+    assert_eq!(reader.read_limit(0).unwrap(), 4);
+
+    assert_eq!(producer.send_to(0, &message(10)).unwrap(), 10);
+    assert_eq!(reader.read_limit(0).unwrap(), 11);
+    let records = reader.read(0, 0, ALL).unwrap();
+    assert_eq!(records.len(), 11);
+    for (i, rec) in records.iter().enumerate() {
+        assert_is_message(rec, i as u64);
+    }
+}
+
+/// Opening a producer flushes the log and makes all of it readable, even
+/// what a dead writer wrote without flushing.
+#[test]
+fn opening_a_producer_makes_the_whole_log_readable() {
+    let (dir, db) = new_db();
+    db.create_topic("orders", config(1, 1 << 20, FsyncPolicy::Always))
+        .unwrap();
+    let mut producer = db.producer("orders").unwrap();
+    for i in 0..10 {
+        producer.send_to(0, &message(i)).unwrap();
+    }
+    drop(producer);
+    poke_state(dir.path(), "orders", READ_LIMIT_FIELD, 4);
+
+    let _producer = db.producer("orders").unwrap();
+    let reader = db.reader("orders").unwrap();
+    assert_eq!(reader.read_limit(0).unwrap(), 10);
+}
+
 // ---------------------------------------------------------------------------
 // Several writers
 // ---------------------------------------------------------------------------
+
+/// Writers in threads, with `Always`, flushing through group commit: every
+/// send returns only once its message is readable, and nothing is lost,
+/// duplicated or reordered, across many segment rotations.
+#[test]
+fn concurrent_writers_with_always_return_only_once_readable() {
+    const WRITERS: [&str; 4] = ["a", "b", "c", "d"];
+    const PER_WRITER: u64 = 100;
+    let (_dir, db) = new_db();
+    db.create_topic("shared", config(1, 2000, FsyncPolicy::Always))
+        .unwrap();
+    let handles: Vec<_> = WRITERS
+        .iter()
+        .map(|writer| {
+            let db = db.clone();
+            thread::spawn(move || {
+                let mut producer = db.producer("shared").unwrap();
+                let reader = db.reader("shared").unwrap();
+                for seq in 0..PER_WRITER {
+                    let offset = producer.send_to(0, &tagged(writer, seq)).unwrap();
+                    assert!(
+                        reader.read_limit(0).unwrap() > offset,
+                        "offset {offset} is readable when its send returns"
+                    );
+                }
+            })
+        })
+        .collect();
+    for handle in handles {
+        handle.join().unwrap();
+    }
+
+    let records = read_tagged(&db, "shared");
+    assert_eq!(records.len() as u64, WRITERS.len() as u64 * PER_WRITER);
+    assert_each_writer_in_order(&records, &WRITERS);
+    assert!(
+        db.describe_topic("shared").unwrap().partitions[0]
+            .segments
+            .len()
+            > 5,
+        "the test must cover rotations between a write and its flush"
+    );
+}
 
 #[test]
 fn two_producers_in_the_same_process_take_turns_on_a_partition() {

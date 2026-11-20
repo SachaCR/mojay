@@ -363,6 +363,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mojay-bench"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "mojay",
+ "tempfile",
+]
+
+[[package]]
 name = "mojay-cli"
 version = "0.1.0"
 dependencies = [

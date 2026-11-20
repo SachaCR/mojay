@@ -77,7 +77,7 @@ impl PartitionLog {
     /// other writers and for readers.
     pub(crate) fn writer_state(&self) -> WriterState {
         WriterState {
-            read_limit: self.next_offset(),
+            next_offset: self.next_offset(),
             end_position: self.active().size(),
             active_base: self.active().base_offset(),
             start_offset: self.start_offset(),
@@ -105,10 +105,10 @@ impl PartitionLog {
         self.segments
             .retain(|s| s.base_offset() >= expected.start_offset);
         if (self.active().size(), self.next_offset())
-            != (expected.end_position, expected.read_limit)
+            != (expected.end_position, expected.next_offset)
         {
             self.active_mut()
-                .catch_up(expected.end_position, expected.read_limit)?;
+                .catch_up(expected.end_position, expected.next_offset)?;
         }
         Ok(())
     }
@@ -131,6 +131,18 @@ impl PartitionLog {
     /// message leaves none of them written. With [`FsyncPolicy::Always`], the whole
     /// batch is on disk on return.
     pub fn append_batch(&mut self, messages: &[Message]) -> Result<Range<u64>> {
+        let range = self.append_unsynced(messages)?;
+        if self.config.fsync == FsyncPolicy::Always {
+            self.active().sync()?;
+        }
+        Ok(range)
+    }
+
+    /// Like [`append_batch`](Self::append_batch), but without the final
+    /// `fsync` of the `Always` policy: the caller flushes later, possibly
+    /// together with other writers' messages (group commit). A segment sealed
+    /// along the way is still flushed before the next one is created.
+    pub(crate) fn append_unsynced(&mut self, messages: &[Message]) -> Result<Range<u64>> {
         let sizes = messages
             .iter()
             .map(record::validate)
@@ -153,9 +165,6 @@ impl PartitionLog {
         }
         self.write_pending(&mut pending)?;
 
-        if self.config.fsync == FsyncPolicy::Always {
-            self.active().sync()?;
-        }
         // A new sealed segment may have aged; size, on the other hand, is
         // checked on each append, from the sizes known in memory.
         if rolled || self.exceeds_max_bytes() {

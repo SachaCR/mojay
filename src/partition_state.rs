@@ -4,18 +4,25 @@
 //!
 //! | Field          | Meaning                                                        |
 //! |----------------|----------------------------------------------------------------|
-//! | `read_limit`   | First offset readers may not read yet. Published last.         |
+//! | `read_limit`   | First offset readers may not read yet. Only ever grows.        |
 //! | `end_position` | Number of valid bytes in the active segment, header included.  |
 //! | `active_base`  | Base offset of the active segment.                             |
 //! | `start_offset` | First available offset (base of the oldest segment).           |
 //! | `dirty`        | Non-zero while a writer is modifying the partition's files.    |
+//! | `next_offset`  | Offset the next written message will get.                      |
 //!
-//! Readers only use `read_limit`. Writers use the whole slot, and only while
+//! Readers only use `read_limit`. Writers publish the other fields while
 //! holding the partition's write lock: whatever they read there was published
 //! by the previous lock holder, so their view of the files can catch up with
 //! appends made by other processes. `dirty` is set before touching any file
 //! and cleared when publishing: if a writer dies in between, the next one
 //! sees it and recovers the partition from disk.
+//!
+//! `next_offset` and `read_limit` are separate for group commit: messages are
+//! written (and `next_offset` published) under the write lock, and only become
+//! readable once flushed, which happens after the lock is released and can
+//! cover several writers' messages at once. `read_limit` therefore trails
+//! `next_offset` and only moves forward (`advance_read_limit`).
 //!
 //! The file is memory-mapped (shared `mmap`) by every process: publishing or
 //! reading a field is a simple atomic operation in memory, with no system call.
@@ -32,7 +39,7 @@ use memmap2::{MmapOptions, MmapRaw};
 use crate::error::{Error, Result, corrupt};
 use crate::segment::HEADER_SIZE;
 
-/// Fields per slot. Eight `u64`s: five used, the rest reserved.
+/// Fields per slot. Eight `u64`s: six used, the rest reserved.
 const FIELDS: usize = 8;
 const SLOT_SIZE: usize = FIELDS * std::mem::size_of::<u64>();
 
@@ -41,11 +48,12 @@ const END_POSITION: usize = 1;
 const ACTIVE_BASE: usize = 2;
 const START_OFFSET: usize = 3;
 const DIRTY: usize = 4;
+const NEXT_OFFSET: usize = 5;
 
 /// What a writer publishes about a partition after each change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct WriterState {
-    pub(crate) read_limit: u64,
+    pub(crate) next_offset: u64,
     pub(crate) end_position: u64,
     pub(crate) active_base: u64,
     pub(crate) start_offset: u64,
@@ -102,13 +110,25 @@ impl PartitionStates {
         Ok(self.field(partition, READ_LIMIT)?.load(Ordering::Acquire))
     }
 
-    /// The whole slot. Only meaningful under the partition's write lock.
+    /// Offset the next written message will get. Readable without the write
+    /// lock: every message below it is fully written (not necessarily flushed).
+    pub(crate) fn next_offset(&self, partition: u32) -> Result<u64> {
+        Ok(self.field(partition, NEXT_OFFSET)?.load(Ordering::Acquire))
+    }
+
+    /// Base of the active segment. Read without the write lock, *after*
+    /// `next_offset`: it is then at least as recent as that offset.
+    pub(crate) fn active_base(&self, partition: u32) -> Result<u64> {
+        Ok(self.field(partition, ACTIVE_BASE)?.load(Ordering::Acquire))
+    }
+
+    /// The writers' fields. Only meaningful under the partition's write lock.
     pub(crate) fn load(&self, partition: u32) -> Result<SharedState> {
         let get =
             |index| -> Result<u64> { Ok(self.field(partition, index)?.load(Ordering::Acquire)) };
         Ok(SharedState {
             state: WriterState {
-                read_limit: get(READ_LIMIT)?,
+                next_offset: get(NEXT_OFFSET)?,
                 end_position: get(END_POSITION)?,
                 active_base: get(ACTIVE_BASE)?,
                 start_offset: get(START_OFFSET)?,
@@ -123,9 +143,9 @@ impl PartitionStates {
         Ok(())
     }
 
-    /// Publishes a consistent state and clears `dirty`. `read_limit` is stored
-    /// last, with *Release*: a reader that sees the new limit also sees every
-    /// log write made before.
+    /// Publishes the writers' state and clears `dirty`, under the write lock.
+    /// `next_offset` is stored last: whoever sees it also sees the active
+    /// segment it belongs to. The read limit is not touched.
     pub(crate) fn publish(&self, partition: u32, state: &WriterState) -> Result<()> {
         self.field(partition, END_POSITION)?
             .store(state.end_position, Ordering::Release);
@@ -134,8 +154,25 @@ impl PartitionStates {
         self.field(partition, START_OFFSET)?
             .store(state.start_offset, Ordering::Release);
         self.field(partition, DIRTY)?.store(0, Ordering::Release);
+        self.field(partition, NEXT_OFFSET)?
+            .store(state.next_offset, Ordering::Release);
+        Ok(())
+    }
+
+    /// Makes every offset below `limit` readable, unless a later limit was
+    /// already published: the read limit never moves back. *Release*: a
+    /// reader that sees the new limit also sees every log write made before.
+    pub(crate) fn advance_read_limit(&self, partition: u32, limit: u64) -> Result<()> {
         self.field(partition, READ_LIMIT)?
-            .store(state.read_limit, Ordering::Release);
+            .fetch_max(limit, Ordering::Release);
+        Ok(())
+    }
+
+    /// Sets the read limit, possibly lower: only after repairing a partition
+    /// on open, when messages beyond it turned out to be lost.
+    pub(crate) fn set_read_limit(&self, partition: u32, limit: u64) -> Result<()> {
+        self.field(partition, READ_LIMIT)?
+            .store(limit, Ordering::Release);
         Ok(())
     }
 
@@ -185,7 +222,7 @@ mod tests {
         assert_eq!(
             slot.state,
             WriterState {
-                read_limit: 0,
+                next_offset: 0,
                 end_position: HEADER_SIZE,
                 active_base: 0,
                 start_offset: 0,
@@ -204,13 +241,12 @@ mod tests {
         writer.mark_dirty(2).unwrap();
         assert!(reader.load(2).unwrap().dirty);
         let state = WriterState {
-            read_limit: 42,
+            next_offset: 42,
             end_position: 4096,
             active_base: 30,
             start_offset: 10,
         };
         writer.publish(2, &state).unwrap();
-        assert_eq!(reader.read_limit(2).unwrap(), 42);
         assert_eq!(
             reader.load(2).unwrap(),
             SharedState {
@@ -218,7 +254,29 @@ mod tests {
                 dirty: false
             }
         );
-        assert_eq!(reader.read_limit(0).unwrap(), 0, "other slots untouched");
+        assert_eq!(reader.next_offset(2).unwrap(), 42);
+        assert_eq!(
+            reader.read_limit(2).unwrap(),
+            0,
+            "publishing does not make anything readable"
+        );
+        assert_eq!(reader.next_offset(0).unwrap(), 0, "other slots untouched");
+    }
+
+    #[test]
+    fn read_limit_only_moves_forward_unless_set_after_a_repair() {
+        let (_dir, states) = states(1);
+        states.advance_read_limit(0, 10).unwrap();
+        states.advance_read_limit(0, 7).unwrap();
+        assert_eq!(
+            states.read_limit(0).unwrap(),
+            10,
+            "an older flush never moves it back"
+        );
+        states.advance_read_limit(0, 12).unwrap();
+        assert_eq!(states.read_limit(0).unwrap(), 12);
+        states.set_read_limit(0, 9).unwrap();
+        assert_eq!(states.read_limit(0).unwrap(), 9);
     }
 
     #[test]
