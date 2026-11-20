@@ -2,6 +2,13 @@
   "name": "mojay",
   "version": "0.1.0",
   "description": "Topics, partitions and consumer groups in a local folder, with no server: the SQLite of Kafka.",
+  "license": "MIT OR Apache-2.0",
+  "homepage": "https://mojay.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SachaCR/mojay.git",
+    "directory": "bindings/node"
+  },
   "main": "index.js",
   "types": "index.d.ts",
   "files": [
@@ -26,7 +33,6 @@
     "build:debug": "node scripts/build.mjs",
     "test": "node --test 'tests/*.test.mjs'"
   },
-  "license": "UNLICENSED",
   "private": true,
   "devDependencies": {
     "@napi-rs/cli": "^3.10.12"

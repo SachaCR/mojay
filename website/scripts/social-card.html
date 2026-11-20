@@ -1,0 +1,63 @@
+<!doctype html>
+<!--
+  Source of static/img/social-card.png (1200×630), the image shown when a
+  mojay.dev link is shared. Regenerate it from the website folder with:
+
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless \
+    --hide-scrollbars --window-size=1200,630 --virtual-time-budget=3000 \
+    --screenshot=static/img/social-card.png scripts/social-card.html
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600&family=Space+Grotesk:wght@500;700&display=block" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1200px; height: 630px; overflow: hidden; }
+  body {
+    position: relative;
+    background: #160c24;
+    color: white;
+    font-family: "Space Grotesk", sans-serif;
+  }
+  .glow {
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(560px 380px at 10% 5%, rgba(255,138,31,.45), transparent 70%),
+      radial-gradient(600px 420px at 95% 25%, rgba(255,61,119,.45), transparent 70%),
+      radial-gradient(520px 360px at 55% 115%, rgba(155,44,240,.5), transparent 70%);
+  }
+  .content { position: absolute; left: 80px; top: 78px; right: 80px; bottom: 70px; display: flex; flex-direction: column; }
+  .brand { display: flex; align-items: center; gap: 22px; font-size: 56px; font-weight: 700; letter-spacing: -.02em; }
+  .brand img { width: 76px; height: 76px; }
+  h1 { margin-top: 56px; font-size: 104px; line-height: 1; font-weight: 700; letter-spacing: -.035em; }
+  .gradient {
+    background: linear-gradient(100deg, #ff8a1f 0%, #ff3d77 55%, #b45cff 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  p { margin-top: 30px; max-width: 760px; font-size: 32px; line-height: 1.4; color: rgba(255,255,255,.82); font-weight: 500; }
+  .footer { margin-top: auto; display: flex; justify-content: space-between; align-items: center;
+    font-family: "JetBrains Mono", monospace; font-size: 26px; color: rgba(255,255,255,.7); }
+  .cells { display: flex; gap: 10px; }
+  .cells span { width: 46px; height: 46px; border-radius: 10px;
+    background: linear-gradient(100deg, #ff8a1f, #ff3d77 55%, #9b2cf0); background-size: 600px 100%; }
+  .cells span:nth-child(2) { background-position: -56px 0; }
+  .cells span:nth-child(3) { background-position: -112px 0; }
+  .cells span:nth-child(4) { background-position: -168px 0; }
+  .cells span:nth-child(5) { background-position: -224px 0; }
+  .cells span.pending { background: rgba(255,61,119,.14); border: 2px solid #ff3d77; }
+</style>
+</head>
+<body>
+  <div class="glow"></div>
+  <div class="content">
+    <div class="brand"><img src="../static/img/logo.svg" alt="">Mojay</div>
+    <h1><span class="gradient">SQLite</span> for Kafka</h1>
+    <p>Topics, partitions, offsets and consumer groups in a local folder. No server.</p>
+    <div class="footer">
+      <span>mojay.dev · Rust · Node.js</span>
+      <div class="cells"><span></span><span></span><span></span><span></span><span></span><span class="pending"></span></div>
+    </div>
+  </div>
+</body>
+</html>

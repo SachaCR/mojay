@@ -1,0 +1,19 @@
+release:
+  label: Release
+  permalink: /release
+  description: Release notes and announcements.
+
+rust:
+  label: Rust
+  permalink: /rust
+  description: Posts about Mojay's Rust library.
+
+nodejs:
+  label: Node.js
+  permalink: /nodejs
+  description: Posts about Mojay's Node.js binding.
+
+internals:
+  label: Internals
+  permalink: /internals
+  description: How Mojay works under the hood.

@@ -1,0 +1,94 @@
+/* Designed to sit on the dark hero: translucent whites, not theme colors. */
+
+.wrapper {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: stretch;
+  max-width: 100%;
+}
+
+.tabs {
+  display: flex;
+  gap: 0.25rem;
+  margin-bottom: 0.4rem;
+}
+
+.tab {
+  padding: 0.2rem 0.75rem;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.65);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.tab:hover {
+  color: white;
+}
+
+.tabActive {
+  background: rgba(255, 255, 255, 0.14);
+  color: white;
+}
+
+.install {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  padding: 0.4rem 0.4rem 0.4rem 0.9rem;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 10px;
+}
+
+.prompt {
+  color: var(--mojay-pink);
+  font-family: var(--ifm-font-family-monospace);
+  font-weight: 600;
+}
+
+/* `min-width: 0` lets the command scroll inside the pill instead of pushing
+   the buttons off a phone screen: a flex item won't shrink below its content
+   otherwise. */
+.install code {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: pre;
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 0.9rem;
+  padding: 0;
+  scrollbar-width: thin;
+}
+
+.copyButton,
+.registryLink {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  color: rgba(255, 255, 255, 0.75);
+  transition: background 0.15s, color 0.15s;
+}
+
+.copyButton {
+  border: none;
+  background: rgba(255, 255, 255, 0.12);
+  cursor: pointer;
+}
+
+.copyButton:hover,
+.registryLink:hover {
+  background: rgba(255, 255, 255, 0.22);
+  color: white;
+}

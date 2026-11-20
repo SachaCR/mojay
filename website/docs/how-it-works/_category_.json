@@ -1,0 +1,5 @@
+{
+  "label": "How it works",
+  "position": 4,
+  "link": { "type": "generated-index", "description": "What Mojay writes on disk, how it recovers from a crash, and how processes coordinate without a server." }
+}

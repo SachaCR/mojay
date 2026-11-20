@@ -1,0 +1,362 @@
+/* Homepage. The hero and the call to action are always dark (they carry the
+   brand gradient); the sections in between follow the light/dark theme. */
+
+/* ---------- Hero ---------- */
+
+.hero {
+  position: relative;
+  overflow: hidden;
+  padding: 5.5rem 0 5rem;
+  background: var(--mojay-ink);
+  color: white;
+}
+
+/* Two soft color blooms behind the content. */
+.glow {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(40rem 26rem at 15% 10%, rgba(255, 138, 31, 0.35), transparent 70%),
+    radial-gradient(42rem 30rem at 85% 30%, rgba(255, 61, 119, 0.38), transparent 70%),
+    radial-gradient(36rem 26rem at 60% 110%, rgba(155, 44, 240, 0.4), transparent 70%);
+  pointer-events: none;
+}
+
+.heroInner {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  align-items: center;
+  gap: 3rem;
+}
+
+.heroText {
+  min-width: 0;
+}
+
+.eyebrow {
+  margin-bottom: 1rem;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.85rem;
+  letter-spacing: 0.04em;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.title {
+  margin-bottom: 1.25rem;
+  font-size: clamp(2.6rem, 6vw, 4.6rem);
+  font-weight: 700;
+  line-height: 1.02;
+  letter-spacing: -0.03em;
+  color: white;
+}
+
+.gradientText {
+  background: var(--mojay-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.subtitle {
+  max-width: 34rem;
+  margin-bottom: 2rem;
+  font-size: 1.2rem;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.primaryButton {
+  border: none;
+  background: var(--mojay-gradient);
+  color: white;
+  box-shadow: 0 10px 30px -10px rgba(255, 61, 119, 0.8);
+}
+
+.primaryButton:hover {
+  color: white;
+  filter: brightness(1.08);
+}
+
+.ghostButton {
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.06);
+  color: white;
+}
+
+.ghostButton:hover {
+  border-color: white;
+  color: white;
+}
+
+.install {
+  margin-top: 2rem;
+}
+
+.heroVisual {
+  display: flex;
+  justify-content: center;
+  min-width: 0;
+}
+
+/* ---------- Features ---------- */
+
+.features {
+  padding: 4rem 0 2rem;
+}
+
+.featureGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1.25rem;
+}
+
+.featureCard {
+  position: relative;
+  padding: 1.5rem;
+  border-radius: 14px;
+  background: var(--ifm-background-surface-color);
+  border: 1px solid var(--ifm-color-emphasis-200);
+  overflow: hidden;
+}
+
+.featureCard::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 4px;
+  background: var(--accent);
+}
+
+.featureCard h3 {
+  margin-bottom: 0.6rem;
+  font-size: 1.2rem;
+}
+
+.featureCard p {
+  margin: 0;
+  color: var(--ifm-color-emphasis-800);
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+/* ---------- Code examples ---------- */
+
+.exampleRow {
+  padding: 4rem 0;
+}
+
+.exampleRowAlt {
+  background: var(--ifm-background-surface-color);
+}
+
+.exampleInner {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  align-items: center;
+  gap: 3rem;
+}
+
+.reverse .exampleText {
+  order: 2;
+}
+
+.exampleText {
+  min-width: 0;
+}
+
+.exampleText h2 {
+  font-size: 1.9rem;
+}
+
+.exampleText p {
+  font-size: 1.05rem;
+  line-height: 1.65;
+  color: var(--ifm-color-emphasis-800);
+}
+
+.exampleCode {
+  min-width: 0;
+}
+
+.exampleCode :global(.theme-code-block) {
+  margin: 0;
+  box-shadow: 0 20px 50px -25px rgba(22, 12, 36, 0.45);
+}
+
+.tag {
+  display: inline-block;
+  margin-bottom: 0.75rem;
+  padding: 0.15rem 0.7rem;
+  border-radius: 999px;
+  background: var(--mojay-gradient);
+  color: white;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+/* ---------- Numbers ---------- */
+
+.numbers {
+  padding: 4.5rem 0;
+  text-align: center;
+}
+
+.sectionTitle {
+  margin-bottom: 2.5rem;
+  font-size: 2rem;
+}
+
+.numberGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1.5rem;
+}
+
+.numberValue {
+  font-family: var(--ifm-heading-font-family);
+  font-size: 2.6rem;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.numberValue small {
+  margin-left: 0.35rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--ifm-color-emphasis-700);
+}
+
+.number p {
+  margin: 0.5rem auto 0;
+  max-width: 14rem;
+  font-size: 0.92rem;
+  color: var(--ifm-color-emphasis-700);
+}
+
+.numbersNote {
+  margin: 2rem 0 0;
+  font-size: 0.9rem;
+  color: var(--ifm-color-emphasis-700);
+}
+
+/* ---------- Fit ---------- */
+
+.fit {
+  padding: 1rem 0 4.5rem;
+}
+
+.fitGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1.5rem;
+}
+
+.fitCard {
+  padding: 1.75rem 2rem;
+  border-radius: 14px;
+  border: 1px solid var(--ifm-color-emphasis-200);
+  background: var(--ifm-background-surface-color);
+}
+
+.fitCard ul {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+
+.fitCard li {
+  margin-bottom: 0.5rem;
+  line-height: 1.55;
+}
+
+.fitCardMuted {
+  background: transparent;
+}
+
+/* ---------- Call to action ---------- */
+
+.cta {
+  padding: 4.5rem 0;
+  background: var(--mojay-gradient);
+  color: white;
+  text-align: center;
+}
+
+.cta h2 {
+  font-size: clamp(2rem, 4vw, 2.8rem);
+  color: white;
+}
+
+.cta p {
+  margin-bottom: 2rem;
+  font-size: 1.15rem;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.cta .buttons {
+  justify-content: center;
+}
+
+.cta .primaryButton {
+  background: white;
+  color: var(--mojay-ink);
+  box-shadow: none;
+}
+
+.cta .primaryButton:hover {
+  color: var(--mojay-ink);
+}
+
+.cta .ghostButton {
+  border-color: rgba(255, 255, 255, 0.7);
+  background: transparent;
+}
+
+/* ---------- Small screens ---------- */
+
+@media (max-width: 996px) {
+  .heroInner,
+  .exampleInner {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .reverse .exampleText {
+    order: 0;
+  }
+
+  .featureGrid,
+  .numberGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 600px) {
+  .hero {
+    padding: 3.5rem 0 3.5rem;
+  }
+
+  .subtitle {
+    font-size: 1.05rem;
+  }
+
+  .featureGrid,
+  .numberGrid,
+  .fitGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .exampleRow {
+    padding: 3rem 0;
+  }
+
+  .fitCard {
+    padding: 1.5rem;
+  }
+}

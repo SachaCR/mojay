@@ -3,6 +3,9 @@ name = "mojay-cli"
 version = "0.1.0"
 edition = "2024"
 description = "Command-line tool to inspect and manipulate a Mojay data folder"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [[bin]]
 name = "mojay"

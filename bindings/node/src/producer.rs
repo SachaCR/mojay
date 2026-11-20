@@ -35,7 +35,7 @@ pub struct SendResult {
     pub offset: i64,
 }
 
-/// The writer of a topic. Only one per topic, across all processes.
+/// A writer on a topic. Other producers, in this process or others, can write to the same topic at the same time.
 ///
 /// Sends run in call order, even without awaiting each Promise. With
 /// `fsync: 'always'`, a message is on disk when its Promise resolves.
@@ -103,7 +103,7 @@ impl Producer {
             .call(env, |producer| Ok(producer.flush()?), |_, ()| Ok(()))
     }
 
-    /// Finishes the pending sends, then releases the topic for another writer.
+    /// Finishes the pending sends, then closes the producer.
     #[napi(ts_return_type = "Promise<void>")]
     pub fn close<'env>(&mut self, env: &'env Env) -> napi::Result<Object<'env>> {
         self.worker.close(env)

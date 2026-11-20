@@ -1,0 +1,148 @@
+/* A terminal-like card on the dark hero. */
+
+.panel {
+  margin: 0;
+  width: 100%;
+  max-width: 460px;
+  padding: 0 0 1rem;
+  border-radius: 16px;
+  background: rgba(10, 5, 20, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 30px 80px -30px rgba(255, 61, 119, 0.55);
+  font-family: var(--ifm-font-family-monospace);
+  color: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(6px);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.7rem 1rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.dots {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.dots i {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.dots i:first-child {
+  background: var(--mojay-pink);
+}
+
+.segments {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  padding: 1rem 1rem 0.4rem;
+}
+
+.segment {
+  opacity: 0.72;
+  transition: opacity 0.3s;
+}
+
+.active {
+  opacity: 1;
+}
+
+/* Kept in the layout so the panel doesn't change height as segments appear. */
+.notYetCreated {
+  visibility: hidden;
+}
+
+.segmentLabel {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 0.3rem;
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.active .segmentLabel span {
+  color: var(--mojay-orange);
+}
+
+.cells {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 0.35rem;
+}
+
+.cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 2.1rem;
+  border-radius: 7px;
+  border: 1px dashed rgba(255, 255, 255, 0.16);
+  font-size: 0.8rem;
+  font-weight: 600;
+  transition: background 0.25s, border-color 0.25s, transform 0.25s;
+}
+
+.written {
+  border: 1px solid var(--mojay-pink);
+  background: rgba(255, 61, 119, 0.12);
+  color: white;
+}
+
+.readable {
+  border-color: transparent;
+  background: var(--mojay-gradient);
+  background-attachment: fixed;
+  color: white;
+}
+
+/* The first offset not yet readable: where the read limit sits. */
+.limit {
+  box-shadow: -3px 0 0 0 white;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  padding: 0.5rem 1rem 0;
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+
+.readLimit {
+  margin-left: auto;
+}
+
+.readLimit strong {
+  color: white;
+  font-weight: 600;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cell,
+  .segment {
+    transition: none;
+  }
+}

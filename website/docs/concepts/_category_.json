@@ -1,0 +1,5 @@
+{
+  "label": "Concepts & guides",
+  "position": 3,
+  "link": { "type": "generated-index", "description": "Topics, partitions, producers, consumers and groups, and the choices that shape durability and disk use." }
+}

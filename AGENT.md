@@ -7,7 +7,8 @@ la performance ensuite.**
 
 La note de conception fait référence : [docs/conception.md](docs/conception.md),
 versionnée avec le code. Un changement de format disque ou de comportement visible
-commence par sa mise à jour, dans le même commit que le code. La note en ligne
+commence par sa mise à jour, dans le même commit que le code, avec la page
+correspondante du site (`website/docs/`, en anglais). La note en ligne
 (https://claude.ai/artifact/674k8FuSABpT9t2fr7fA1w) sert aux discussions.
 
 ## 1. Architecture : une responsabilité par module
@@ -40,7 +41,9 @@ Modules de support, chacun avec une seule responsabilité :
 La CLI est une crate séparée du workspace : ses dépendances (`clap`) ne sont pas
 imposées aux utilisateurs de la bibliothèque. Il en va de même pour les programmes
 de démonstration de `demo/` (voir `demo/README.md`) et des benchmarks de `bench/`
-(voir `bench/README.md`), qui n'utilisent que l'API publique.
+(voir `bench/README.md`), qui n'utilisent que l'API publique. Le site web
+(https://mojay.dev) vit dans `website/` : un projet Docusaurus géré avec pnpm,
+hors du workspace Cargo (voir `website/README.md`).
 
 - Un module expose le minimum : `pub(crate)` par défaut, `pub` seulement pour l'API publique.
 - La logique pure (calculs, encodage, quotas d'un groupe) est séparée des effets
@@ -120,6 +123,13 @@ Si le binding Node.js est touché, ses tests aussi, depuis `bindings/node` :
 ```bash
 npm run build:debug
 npm test
+```
+
+Si le site est touché, depuis `website` (la construction échoue sur un lien cassé) :
+
+```bash
+pnpm typecheck
+pnpm build
 ```
 
 Les vérifications doivent passer sans avertissement. Les dépendances restent minimales :

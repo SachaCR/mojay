@@ -103,7 +103,7 @@ impl Db {
 
     /// Opens a writer on a topic. Any number of producers, in this process or
     /// others, can write to the same topic: they take turns on each partition,
-    /// one message (or batch) at a time.
+    /// one message at a time.
     #[napi]
     pub fn producer(&self, env: Env, topic: String) -> napi::Result<Producer> {
         let producer = to_js(&env, self.inner.producer(&topic))?;

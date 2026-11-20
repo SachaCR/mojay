@@ -1,0 +1,9 @@
+{
+  // Not used to compile: Docusaurus builds the site. It gives editors and
+  // `pnpm typecheck` the right types.
+  "extends": "@docusaurus/tsconfig",
+  "compilerOptions": {
+    "baseUrl": "."
+  },
+  "exclude": [".docusaurus", "build"]
+}

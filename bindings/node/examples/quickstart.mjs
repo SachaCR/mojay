@@ -17,7 +17,7 @@ try {
   if (error.code !== "MOJAY_TOPIC_EXISTS") throw error;
 }
 
-// The topic's writer: only one at a time, across all processes.
+// A writer on the topic. Other producers, here or in other processes, can write to it too.
 const producer = db.producer("orders");
 
 for (const customer of ["client-1", "client-2", "client-3", "client-1"]) {

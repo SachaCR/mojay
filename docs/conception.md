@@ -29,7 +29,7 @@ Mojay reprend le vocabulaire de Kafka sans concept nouveau. Un consumer seul, un
 | Concept | Définition dans Mojay |
 | --- | --- |
 | Dossier de données | L'équivalent du fichier SQLite : tout l'état vit dedans, rien ailleurs. |
-| Topic | Un nom et un nombre de partitions fixé à la création. Un seul writer à la fois. |
+| Topic | Un nom et un nombre de partitions fixé à la création. Autant de writers que voulu, à tour de rôle sur chaque partition. |
 | Partition | Un log append-only ordonné. Unité d'ordre et unité de répartition dans un groupe. |
 | Offset | Un `u64` par partition, qui commence à 0 et ne fait que croître. |
 | Message | Clé optionnelle, valeur, headers, timestamp en millisecondes. |
@@ -43,7 +43,7 @@ Un topic est un dossier avec un sous-dossier par partition. Chaque consumer grou
 
 ```
 data/
-  mojay.toml                       # version du format, options globales
+  mojay.toml                       # version du format (seule clé acceptée)
   topics/<topic>/
     meta.toml                      # nombre de partitions, rétention, politique fsync
     partitions.state               # état partagé de chaque partition, en mmap
@@ -59,7 +59,7 @@ data/
     offsets/<topic>-<p>            # offset commité du groupe
 ```
 
-Toutes les mises à jour de petits fichiers (`meta.toml`, offsets) sont atomiques : écriture d'un fichier temporaire, `fsync`, puis `rename`.
+Toutes les mises à jour de petits fichiers (`meta.toml`, offsets) sont atomiques : écriture d'un fichier temporaire, `fsync`, `rename`, puis `fsync` du dossier.
 
 ## Format du log
 
@@ -158,7 +158,7 @@ Un topic accepte autant de consumers que voulu, sans aucun verrou en lecture. Le
 
 Un membre possède une partition tant qu'il tient le `flock` sur `partitions/<topic>-<p>.lock`. Le système de fichiers joue le rôle du coordinateur de Kafka : pas de serveur, pas de heartbeat, et un membre qui crashe perd ses verrous instantanément.
 
-Chaque membre exécute cette boucle de son côté, toutes les 200 ms, et les vues des membres convergent en quelques itérations :
+Chaque membre exécute cette boucle de son côté, à son ouverture puis dans `poll`, au plus toutes les 200 ms ; les vues des membres convergent en quelques itérations. Un membre qui n'appelle pas `poll` ne rééquilibre donc pas, et ne cède pas ses partitions à un nouveau venu :
 
 ```mermaid
 flowchart LR
@@ -188,7 +188,7 @@ flowchart LR
 
 **Inscription sans course** : un nouveau membre crée son fichier sous un nom temporaire, le verrouille, puis le renomme dans `members/`. Le verrou suit l'inode, donc personne ne voit jamais ce fichier sans verrou et ne le prend pour celui d'un membre mort.
 
-**Offsets du groupe** : `offsets/<topic>-<p>` n'est écrit que par le détenteur du verrou de la partition, par écriture atomique : fichier temporaire, puis `rename`.
+**Offsets du groupe** : `offsets/<topic>-<p>` n'est écrit que par le détenteur du verrou de la partition, par écriture atomique : fichier temporaire, `fsync`, `rename`, puis `fsync` du dossier.
 
 ## API publique Rust (esquisse)
 
@@ -221,7 +221,7 @@ loop {
 - **Administration** : `list_topics`, `describe_topic` (configuration, et pour chaque partition son premier offset, sa limite de lecture et ses segments), `committed_offsets` (offsets commités par chaque groupe). `delete_topic` reste à faire.
 - **Inspection** : `mojay::inspect::dump_segment` lit un segment brut, sans rien réparer, et rapporte une éventuelle fin illisible au lieu d'échouer.
 - **Rebalance** : `consumer.take_rebalance_events()` rend les partitions reçues et cédées ; `consumer.assignment()` donne les partitions possédées.
-- **Erreurs** : `TopicExists`, `UnknownTopic`, `OffsetOutOfRange`, `Corrupt`, `Io`.
+- **Erreurs** : `TopicExists`, `UnknownTopic`, `UnknownPartition`, `OffsetOutOfRange`, `RecordTooLarge`, `InvalidRecord`, `InvalidConfig`, `InvalidName`, `Corrupt`, `Io`.
 
 ## Garanties et limites
 
@@ -240,7 +240,7 @@ Mojay garantit l'ordre par partition et une livraison at-least-once, sur une seu
 - Une seule machine.
 - Les writers d'une partition écrivent chacun leur tour : le débit d'une partition reste celui d'un writer à la fois (un `flock` et un `fstat` par lot en plus, négligeables devant un `fsync`).
 - Nombre de partitions fixe en V1 : en ajouter changerait la partition associée à chaque clé.
-- La latence d'un rebalance dépend de la période de la boucle (200 ms par défaut).
+- La latence d'un rebalance dépend de la fréquence des `poll` de chaque membre (la boucle tourne au plus toutes les 200 ms).
 
 **Pièges connus**
 

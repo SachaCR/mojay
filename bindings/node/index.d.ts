@@ -55,7 +55,7 @@ export declare class Db {
   /**
    * Opens a writer on a topic. Any number of producers, in this process or
    * others, can write to the same topic: they take turns on each partition,
-   * one message (or batch) at a time.
+   * one message at a time.
    */
   producer(topic: string): Producer
   /**
@@ -66,7 +66,7 @@ export declare class Db {
 }
 
 /**
- * The writer of a topic. Only one per topic, across all processes.
+ * A writer on a topic. Other producers, in this process or others, can write to the same topic at the same time.
  *
  * Sends run in call order, even without awaiting each Promise. With
  * `fsync: 'always'`, a message is on disk when its Promise resolves.
@@ -77,7 +77,7 @@ export declare class Producer {
   send(message: Message): Promise<SendResult>
   /** Forces everything sent so far to be written to disk. */
   flush(): Promise<void>
-  /** Finishes the pending sends, then releases the topic for another writer. */
+  /** Finishes the pending sends, then closes the producer. */
   close(): Promise<void>
 }
 
