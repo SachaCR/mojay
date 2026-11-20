@@ -198,8 +198,7 @@ const EXAMPLES: Example[] = [
     description: (
       <>
         Open a folder, create topics, produce and consume. Errors are typed,
-        nothing panics on bad data, and the only <code>unsafe</code> code is one
-        small shared-memory module.
+        and damaged data on disk comes back as an error, never as a crash.
       </>
     ),
     code: RUST_EXAMPLE,
@@ -306,14 +305,20 @@ function Numbers(): ReactNode {
 function Fit(): ReactNode {
   return (
     <section className={styles.fit}>
+      <div className="container">
+        <p className={styles.fitIntro}>
+          Mojay was created to prototype Kafka-style designs locally, without
+          the burden of running Kafka.
+        </p>
+      </div>
       <div className={clsx("container", styles.fitGrid)}>
         <div className={styles.fitCard}>
-          <Heading as="h3">A good fit</Heading>
+          <Heading as="h3">Made for</Heading>
           <ul>
-            <li>Passing events and jobs between processes on one machine</li>
-            <li>Desktop, CLI and edge applications that need a durable queue</li>
-            <li>A local event log to replay, audit or rebuild state from</li>
-            <li>Tests and prototypes of Kafka-style designs, without a cluster</li>
+            <li>Prototyping event-driven designs on your laptop, with no broker to install</li>
+            <li>Tests: a real log in a temporary folder, created and thrown away in milliseconds</li>
+            <li>CI pipelines, where starting a Kafka cluster is slow and flaky</li>
+            <li>Demos and local development environments</li>
           </ul>
         </div>
         <div className={clsx(styles.fitCard, styles.fitCardMuted)}>
@@ -323,6 +328,19 @@ function Fit(): ReactNode {
             <li>Clients that speak the Kafka protocol: Mojay is a library, not a broker</li>
             <li>Network file systems: locks and fsync need a local disk</li>
           </ul>
+        </div>
+      </div>
+      <div className="container">
+        <div className={styles.fitWarning}>
+          <Heading as="h3">In production, at your own risk for now</Heading>
+          <p>
+            Mojay can also run in real applications on one machine: passing
+            events and jobs between processes, a durable queue for a desktop,
+            CLI or edge application, a local event log to replay. It is built
+            with care for durability and crash recovery, but it is young and
+            has not yet been proven in production. If you use it there, test
+            it against your own failure scenarios and keep a way back.
+          </p>
         </div>
       </div>
     </section>

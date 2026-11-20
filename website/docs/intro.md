@@ -54,8 +54,20 @@ produce from a Node.js service and watch the topic with `mojay tail --follow`.
 
 ## When to use Mojay
 
-Mojay fits when the producers and the consumers run on **one machine** and you
-want Kafka's model without operating Kafka:
+Mojay was created to **prototype Kafka-style designs locally**, without the
+burden of running Kafka. That is what it is made for:
+
+- **Prototyping** code designed around topics, partitions and consumer groups,
+  on your laptop, with no broker to install or keep running.
+- **Tests**: each test gets a real log in a temporary folder, created and
+  thrown away in milliseconds.
+- **CI pipelines**, where starting a Kafka cluster is slow and flaky.
+- **Demos and local development environments.**
+
+### In production, at your own risk for now
+
+Mojay can also run in real applications, when the producers and the consumers
+run on **one machine**:
 
 - **A local event log**: an append-only history of what happened in an
   application, replayable from any offset.
@@ -64,10 +76,16 @@ want Kafka's model without operating Kafka:
   partitions are picked up by the others.
 - **CLI tools and desktop applications** that need a durable queue or log but
   cannot ask their users to install a broker.
-- **Tests and local development** of code that is designed around topics,
-  partitions and consumer groups.
 - **Edge devices and single servers** that buffer events locally, then ship
   them elsewhere when they can.
+
+:::warning
+
+Mojay is built with care for durability and crash recovery, but it is young
+and has not yet been proven in production. Using it there is at your own risk
+for now: test it against your own failure scenarios and keep a way back.
+
+:::
 
 ## When not to use it
 
