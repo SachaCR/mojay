@@ -24,6 +24,30 @@ pub enum Error {
 
     #[error("configuration invalide : {0}")]
     InvalidConfig(String),
+
+    /// Un autre writer (processus ou objet) tient déjà le verrou du topic.
+    #[error("le topic « {0} » a déjà un writer")]
+    Busy(String),
+
+    #[error("le topic « {0} » existe déjà")]
+    TopicExists(String),
+
+    #[error("le topic « {0} » n'existe pas")]
+    UnknownTopic(String),
+
+    #[error("nom invalide « {name} » : {reason}")]
+    InvalidName { name: String, reason: String },
+
+    #[error("partition {partition} inexistante (le topic en a {partitions})")]
+    UnknownPartition { partition: u32, partitions: u32 },
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+/// Raccourci pour construire une [`Error::Corrupt`].
+pub(crate) fn corrupt(path: impl Into<PathBuf>, reason: impl Into<String>) -> Error {
+    Error::Corrupt {
+        path: path.into(),
+        reason: reason.into(),
+    }
+}

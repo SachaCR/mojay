@@ -5,6 +5,8 @@ edition = "2024"
 
 [dependencies]
 crc32c = "0.6.9"
+memmap2 = "0.9.12"
+rustix = { version = "1.1.6", features = ["fs"] }
 thiserror = "2.0.21"
 
 [dev-dependencies]

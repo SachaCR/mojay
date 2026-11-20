@@ -19,9 +19,18 @@ Les couches ne dépendent que des couches en dessous d'elles, jamais l'inverse.
 | Format | `record` | Encoder et décoder un enregistrement | Aucune I/O fichier |
 | Stockage | `segment` | Un fichier `.log` et son index, la récupération | Ne connaît ni topic ni partition |
 | Partition | `log` | Une suite de segments, la rotation, la politique fsync | Aucun verrou inter-processus |
-| Topic | `topic` (à venir) | Partitions, partitionnement, verrou du writer | Ne lit pas d'octets bruts |
+| Topic | `topic` | Partitions, verrou du writer, limites de lecture | Ne lit pas d'octets bruts |
 | Groupes | `group` (à venir) | Membres, quotas, offsets commités | Ne touche pas aux segments |
-| API | `db` (à venir) | Le point d'entrée public | Aucune logique métier propre |
+| API | `db` | Le point d'entrée public | Aucune logique métier propre |
+
+Modules de support, chacun avec une seule responsabilité :
+
+- `index` (logique pure) : format et règle de l'index clairsemé d'un segment.
+- `partitioner` (logique pure) : choix de la partition, murmur2 compatible Kafka.
+- `meta` : fichiers `clé = valeur` (`mojay.toml`, `meta.toml`), lecture stricte.
+- `read_limits` : les limites de lecture partagées en `mmap`. Seul module `unsafe`.
+- `lock` : verrous `flock` inter-processus.
+- `durable` : écritures atomiques et `fsync` de dossier.
 
 - Un module expose le minimum : `pub(crate)` par défaut, `pub` seulement pour l'API publique.
 - La logique pure (calculs, encodage, quotas d'un groupe) est séparée des effets
@@ -57,7 +66,7 @@ Les couches ne dépendent que des couches en dessous d'elles, jamais l'inverse.
 
 **Durabilité et crashs**
 - L'ordre des écritures est une règle de correction : écrire les données,
-  appliquer la politique `fsync`, *puis* les rendre visibles (high watermark).
+  appliquer la politique `fsync`, *puis* les rendre lisibles (limite de lecture, `read_limit`).
 - Un petit fichier se remplace de façon atomique : fichier temporaire, `fsync`,
   `rename`, puis `fsync` du dossier.
 - La récupération ne tronque que ce qui provient d'une écriture interrompue :
@@ -70,8 +79,11 @@ Les couches ne dépendent que des couches en dessous d'elles, jamais l'inverse.
 **Multi-processus**
 - Verrous avec `flock`, jamais avec `fcntl` : ces derniers sont relâchés dès que
   le processus ferme un descripteur quelconque sur le fichier.
+- Un verrou se libère par `flock(LOCK_UN)` explicite, pas seulement en fermant le
+  fichier : un enfant créé par `fork` partage le verrou jusqu'à son `exec`.
 - Lectures positionnelles (`pread`) : pas de curseur de fichier partagé.
-- `unsafe` est interdit, sauf dans le module qui mappe le fichier `hw`. Chaque bloc
+- Un lecteur ne modifie jamais rien sur le disque : seul le writer répare.
+- `unsafe` est interdit, sauf dans le module qui mappe le fichier `read_limits`. Chaque bloc
   `unsafe` porte un commentaire `// SAFETY:` qui justifie l'invariant.
 
 ## 4. Tests

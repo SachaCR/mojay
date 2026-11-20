@@ -35,7 +35,7 @@ Mojay reprend le vocabulaire de Kafka sans concept nouveau. Un consumer seul, un
 | Message | Clé optionnelle, valeur, headers, timestamp en millisecondes. |
 | Consumer | Un processus qui lit un ou plusieurs topics. Il appartient toujours à un groupe, éventuellement seul dedans. |
 | Consumer group | Des consumers qui se partagent les partitions, avec des offsets communs. Identifié par son nom. |
-| High watermark | Par partition, le premier offset pas encore visible. Les lecteurs ne lisent jamais au-delà. |
+| Limite de lecture | Par partition, le premier offset pas encore lisible (`read_limit`). Les lecteurs ne lisent jamais au-delà. C'est l'équivalent du « high watermark » de Kafka. |
 
 ## Arborescence sur disque
 
@@ -47,7 +47,7 @@ data/
   topics/<topic>/
     meta.toml                      # nombre de partitions, rétention, politique fsync
     writer.lock                    # flock exclusif = le writer du topic
-    hw                             # high watermarks, partagé en mmap
+    read_limits                    # limites de lecture, partagées en mmap
     p0/
       00000000000000000000.log     # segment, nommé par son premier offset
       00000000000000000000.idx     # index clairsemé offset -> position
@@ -81,21 +81,21 @@ Chaque partition est une suite de segments append-only. Chaque enregistrement po
 
 **Index** (`.idx`) : des paires `(offset relatif u32, position u32)`, une tous les 4 Kio écrits. Pour lire un offset, on fait une recherche binaire dans l'index, puis un court parcours du segment. L'index se reconstruit entièrement depuis le `.log` : il n'a pas besoin d'être durable.
 
-**High watermarks** (`hw`) : un fichier partagé en `mmap`, avec un `u64` aligné par partition. Le writer le publie avec une écriture atomique *Release* après chaque ajout. Les lecteurs le lisent avec une lecture atomique *Acquire*, sans appel système.
+**Limites de lecture** (`read_limits`) : un fichier partagé en `mmap`, avec un `u64` aligné par partition. Le writer les publie avec une écriture atomique *Release* après chaque ajout. Les lecteurs les lisent avec une lecture atomique *Acquire*, sans appel système.
 
 ## Writer unique par topic
 
 Un seul processus écrit dans un topic à la fois : celui qui tient le verrou `flock` exclusif sur `writer.lock`. Si ce processus crashe, l'OS libère le verrou, et le writer suivant répare la fin du log avant d'écrire.
 
 1. **Prise du verrou** : `flock(LOCK_EX | LOCK_NB)`. En cas d'échec, on renvoie `Error::Busy`, ou on attend si l'appelant a fourni un délai.
-2. **Récupération** : pour chaque partition, on relit le dernier segment depuis la dernière entrée d'index et on valide longueur et CRC. On tronque tout ce qui suit le dernier enregistrement valide, puis on recalcule l'index et le high watermark.
+2. **Récupération** : pour chaque partition, on relit le dernier segment depuis la dernière entrée d'index et on valide longueur et CRC. On tronque tout ce qui suit le dernier enregistrement valide, puis on recalcule l'index et la limite de lecture.
 3. **Choix de la partition** : imposée par l'appelant, sinon hash de la clé (murmur2, comme Kafka), sinon round-robin quand il n'y a pas de clé.
-4. **Ajout** : on écrit l'enregistrement, on met à jour l'index si besoin, on applique la politique de `fsync`, puis on publie le nouveau high watermark.
+4. **Ajout** : on écrit l'enregistrement, on met à jour l'index si besoin, on applique la politique de `fsync`, puis on publie la nouvelle limite de lecture.
 5. **Rotation et rétention** : on ouvre un nouveau segment au-delà de la taille maximale. Le writer supprime les segments entiers les plus anciens qui dépassent la rétention (taille ou durée), et met à jour le premier offset disponible.
 
 | Politique `fsync` | Quand | Survit à un crash du processus | Survit à une coupure de courant |
 | --- | --- | --- | --- |
-| `Always` | Avant chaque publication du high watermark (par défaut) | Oui | Oui |
+| `Always` | Avant chaque publication de la limite de lecture (par défaut) | Oui | Oui |
 | `Interval(ms)` | Périodiquement, par un thread dédié | Oui | Sauf la dernière fenêtre |
 | `Never` | Laissé à l'OS | Oui | Non garanti |
 
@@ -105,12 +105,13 @@ Un crash du processus ne perd que ce qui n'a pas encore été passé à `write`,
 
 Un topic accepte autant de consumers que voulu, sans aucun verrou en lecture. Les offsets sont toujours ceux d'un groupe, même pour un consumer seul.
 
-- **Lecture** : les segments sont lus par `pread`, par gros blocs. Le `mmap` ne sert qu'au fichier `hw`. Aucune lecture ne dépasse le high watermark. Le log est append-only, donc lire pendant une écriture est sûr.
+- **Lecture** : les segments sont lus par `pread`, par gros blocs. Le `mmap` ne sert qu'au fichier `read_limits`. Aucune lecture ne dépasse la limite de lecture. Le log est append-only, donc lire pendant une écriture est sûr.
+- **Écriture en cours** : juste après la limite de lecture, le writer peut être en train d'écrire. Un enregistrement illisible à cet endroit n'est donc pas une erreur ; avant la limite, c'en est une. Le lecteur ne répare jamais rien, et découvre seul les nouveaux segments.
 - **Consumer seul** : un groupe à un membre, qui reçoit donc toutes les partitions. Si un second processus ouvre le même nom, il rejoint le groupe et les partitions se répartissent entre eux, comme dans Kafka.
 - **Offsets** : `groups/<group>/offsets/<topic>-<p>` contient un `u64` et un CRC. Le commit est manuel, ou automatique à intervalle régulier.
 - **Point de départ** : sans offset commité, on part du début (`Earliest`) ou de la fin (`Latest`).
 - **Offset disparu** : si la rétention a supprimé l'offset demandé, la même politique s'applique, ou une erreur si l'appelant le préfère.
-- **Attente de nouveaux messages** : en V1, un polling adaptatif du high watermark en mémoire partagée, de 1 ms à 50 ms selon l'activité. Le coût est négligeable, car c'est une simple lecture mémoire.
+- **Attente de nouveaux messages** : en V1, un polling adaptatif de la limite de lecture en mémoire partagée, de 1 ms à 50 ms selon l'activité. Le coût est négligeable, car c'est une simple lecture mémoire.
 
 `inotify` et `kqueue` ne signalent pas les écritures faites via `mmap`. Une notification événementielle demandera donc un canal séparé, à étudier après la V1.
 
@@ -156,7 +157,7 @@ db.create_topic("orders", TopicConfig { partitions: 4, ..Default::default() })?;
 
 // Producteur : prend le verrou writer du topic, Err(Busy) si déjà pris
 let mut producer = db.producer("orders")?;
-let (partition, offset) = producer.send(Message::new(b"cmd-42", b"{...}"))?;
+let (partition, offset) = producer.send(&Message::new(b"cmd-42", b"{...}"))?;
 producer.flush()?;
 
 // Consumer : rejoint le groupe "billing", seul dedans s'il est le seul processus
@@ -169,7 +170,8 @@ loop {
 }
 ```
 
-- **Administration** : `list_topics`, `describe_topic` (partitions, premier offset, high watermark), `delete_topic`.
+- **Lecture brute** (disponible depuis l'étape 2) : `db.reader(topic)` renvoie un `TopicReader`, qui lit une partition à partir d'un offset, sans verrou et sans dépasser la limite de lecture. Les consumers de l'étape 3 s'appuient dessus.
+- **Administration** : `list_topics`, `describe_topic` (partitions, premier offset, limite de lecture), `delete_topic`.
 - **Rebalance** : des callbacks `on_assigned` et `on_revoked` préviennent l'application quand elle gagne ou perd une partition.
 - **Erreurs** : `Busy`, `TopicExists`, `UnknownTopic`, `OffsetOutOfRange`, `Corrupt`, `Io`.
 
@@ -181,7 +183,7 @@ Mojay garantit l'ordre par partition et une livraison at-least-once, sur une seu
 
 - Ordre strict à l'intérieur d'une partition, et deux messages de même clé vont toujours dans la même partition.
 - Livraison at-least-once pour tous les consumers, seuls ou en groupe : un crash entre traitement et commit rejoue les messages concernés.
-- Aucun message n'est visible avant d'être entièrement écrit, grâce au high watermark.
+- Aucun message n'est visible avant d'être entièrement écrit, grâce à la limite de lecture.
 - Durabilité selon la politique `fsync` choisie.
 
 **Limites assumées**
@@ -195,6 +197,7 @@ Mojay garantit l'ordre par partition et une livraison at-least-once, sur une seu
 **Pièges connus**
 
 - Utiliser `flock`, jamais les verrous POSIX `fcntl` : ceux-ci sont relâchés dès que le processus ferme *n'importe quel* descripteur sur le fichier.
+- Un verrou `flock` est partagé avec tout processus enfant créé par `fork`, jusqu'à son `exec`. Fermer le fichier ne suffit donc pas à le libérer à coup sûr : on appelle `flock(LOCK_UN)` explicitement. Ce cas a été trouvé par un test instable, une fois sur huit.
 - Sous Windows (hors V1), on ne peut pas supprimer un segment encore ouvert par un lecteur : la rétention devra y être différée.
 - Les timestamps viennent de l'horloge du producteur, sans garantie de monotonie.
 
@@ -203,7 +206,7 @@ Mojay garantit l'ordre par partition et une livraison at-least-once, sur une seu
 Le MVP se construit de bas en haut. Chaque étape est testable seule, en commençant par le log d'une partition.
 
 1. ✅ Log d'une partition : format, segments, index, récupération. Tests de crash par troncature à chaque octet de la fin du log.
-2. Topics, writer verrouillé et high watermarks partagés.
+2. ✅ Topics, writer verrouillé et limites de lecture partagées. Tests multi-processus : second writer refusé, writer tué en pleine écriture, lecteur qui suit un writer d'un autre processus.
 3. Consumer seul : lecture et offsets commités, avec des tests multi-processus.
 4. Consumer groups à plusieurs membres.
 5. Rétention par taille et par durée.
@@ -212,6 +215,14 @@ Le MVP se construit de bas en haut. Chaque étape est testable seule, en commen�
 
 Après la V1 : index temporel (positionnement par timestamp), compression, compaction par clé, notification événementielle, couche protocole Kafka.
 
+**Idées à étudier**
+
+- **Voir les messages en texte, pour déboguer** : pouvoir vérifier à l'œil ce qui est stocké. Deux pistes :
+    - un mode de stockage texte (une ligne lisible par enregistrement), activé par topic ;
+    - garder le format binaire, et ajouter une commande `mojay dump` qui affiche un segment en texte (offsets, positions, CRC, clés, valeurs).
+
+  La seconde piste semble préférable : un seul format à fiabiliser (récupération, CRC, valeurs binaires quelconques), et le dump fonctionne aussi sur les données de production. Elle s'intègre à la CLI de l'étape 6.
+
 ## Décisions
 
 | Sujet | Décision |
@@ -219,6 +230,6 @@ Après la V1 : index temporel (positionnement par timestamp), compression, compa
 | Politique `fsync` par défaut | `Always` |
 | Taille de segment par défaut | 64 Mio |
 | Hash de partitionnement | murmur2, compatible Kafka |
-| Lecture des segments | `pread` ; `mmap` seulement pour `hw` |
+| Lecture des segments | `pread` ; `mmap` seulement pour `read_limits` |
 | Écriture | Un writer par topic |
 | Windows | Hors périmètre de la V1 |

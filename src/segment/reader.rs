@@ -1,0 +1,85 @@
+//! Le côté lecteur d'un segment : lecture seule, sans verrou, sans jamais rien
+//! modifier, pendant qu'un autre processus peut être en train d'écrire.
+
+use std::fs::{self, File};
+use std::io;
+use std::path::{Path, PathBuf};
+
+use super::{
+    HEADER_SIZE, ReadRequest, SegmentRead, check_header, index_path, log_path, read_records,
+};
+use crate::error::Result;
+use crate::index::SparseIndex;
+use crate::record::Record;
+
+#[derive(Debug)]
+pub(crate) struct SegmentReader {
+    base_offset: u64,
+    log: File,
+    log_path: PathBuf,
+    index_path: PathBuf,
+    /// Copie de l'index, relue quand le fichier grandit.
+    index: SparseIndex,
+    index_bytes_seen: u64,
+    header_checked: bool,
+}
+
+impl SegmentReader {
+    pub(crate) fn open(dir: &Path, base_offset: u64) -> Result<Self> {
+        let log_path = log_path(dir, base_offset);
+        Ok(Self {
+            base_offset,
+            log: File::open(&log_path)?,
+            log_path,
+            index_path: index_path(dir, base_offset),
+            index: SparseIndex::default(),
+            index_bytes_seen: 0,
+            header_checked: false,
+        })
+    }
+
+    pub(crate) fn base_offset(&self) -> u64 {
+        self.base_offset
+    }
+
+    /// Lit les enregistrements demandés. Le fichier peut grandir entre deux
+    /// appels : sa taille est relue à chaque fois.
+    pub(crate) fn read(&mut self, req: &ReadRequest, out: &mut Vec<Record>) -> Result<SegmentRead> {
+        let size = self.log.metadata()?.len();
+        if size < HEADER_SIZE {
+            // Segment tout juste créé par le writer : rien à lire pour l'instant.
+            return Ok(SegmentRead::Exhausted { taken: 0 });
+        }
+        if !self.header_checked {
+            check_header(&self.log, &self.log_path)?;
+            self.header_checked = true;
+        }
+        self.refresh_index(size)?;
+        let start = self
+            .index
+            .floor(self.base_offset, req.from)
+            .map_or(HEADER_SIZE, |e| e.position());
+        read_records(&self.log, &self.log_path, start, size, req, out)
+    }
+
+    /// Relit l'index si son fichier a changé de taille. Un index absent ou
+    /// abîmé ne fait que ralentir la lecture : on repart alors du début.
+    fn refresh_index(&mut self, log_size: u64) -> Result<()> {
+        let len = match fs::metadata(&self.index_path) {
+            Ok(meta) => meta.len(),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => 0,
+            Err(e) => return Err(e.into()),
+        };
+        if len == self.index_bytes_seen {
+            return Ok(());
+        }
+        let raw = match fs::read(&self.index_path) {
+            Ok(raw) => raw,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Vec::new(),
+            Err(e) => return Err(e.into()),
+        };
+        self.index = SparseIndex::parse(&raw, HEADER_SIZE, log_size).index;
+        self.index_bytes_seen = len;
+        Ok(())
+    }
+}

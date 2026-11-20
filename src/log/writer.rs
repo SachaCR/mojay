@@ -1,66 +1,15 @@
-//! Le log d'une partition : une suite ordonnée de segments, dont seul le
-//! dernier (le segment actif) reçoit des écritures.
-//!
-//! Ce module ne prend aucun verrou inter-processus : c'est la couche topic qui
-//! garantit qu'un seul processus écrit dans une partition à la fois.
+//! Le côté writer d'une partition : seul le dernier segment (le segment actif)
+//! reçoit des écritures.
 
-use std::fs::{self, File};
+use std::fs;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
-use crate::error::{Error, Result};
-use crate::record::{self, MAX_RECORD_SIZE, Message, Record};
-use crate::segment::{self, HEADER_SIZE, Segment, SegmentRead};
-
-/// Quand forcer l'écriture des données sur le disque.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FsyncPolicy {
-    /// `fsync` après chaque ajout, avant de rendre les messages visibles.
-    /// Survit à une coupure de courant. C'est le défaut.
-    Always,
-    /// `fsync` périodique. Le log n'en fait rien seul : l'appelant doit
-    /// appeler [`PartitionLog::sync`] à cet intervalle.
-    Interval(Duration),
-    /// Laissé à l'OS. Survit à un crash du processus, pas à une coupure de courant.
-    Never,
-}
-
-/// Configuration d'un log de partition.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LogConfig {
-    /// Taille au-delà de laquelle on passe au segment suivant.
-    pub segment_max_bytes: u64,
-    /// Nombre d'octets écrits entre deux entrées d'index.
-    pub index_interval_bytes: u64,
-    pub fsync: FsyncPolicy,
-}
-
-impl Default for LogConfig {
-    fn default() -> Self {
-        Self {
-            segment_max_bytes: 64 * 1024 * 1024,
-            index_interval_bytes: 4096,
-            fsync: FsyncPolicy::Always,
-        }
-    }
-}
-
-/// Les positions d'index sont des `u32` : un segment ne peut pas dépasser 4 Gio,
-/// marge comprise pour un dernier enregistrement de taille maximale.
-const MAX_SEGMENT_BYTES: u64 = u32::MAX as u64 - MAX_RECORD_SIZE as u64;
-
-impl LogConfig {
-    fn validate(&self) -> Result<()> {
-        if self.segment_max_bytes <= HEADER_SIZE || self.segment_max_bytes > MAX_SEGMENT_BYTES {
-            return Err(Error::InvalidConfig(format!(
-                "segment_max_bytes doit être compris entre {} et {MAX_SEGMENT_BYTES}",
-                HEADER_SIZE + 1
-            )));
-        }
-        Ok(())
-    }
-}
+use super::{FsyncPolicy, LogConfig, list_segment_bases, read_across, segment_log_path};
+use crate::durable::sync_dir;
+use crate::error::{Error, Result, corrupt};
+use crate::record::{self, Message, Record};
+use crate::segment::Segment;
 
 /// Le log append-only d'une partition, stocké dans son propre dossier.
 #[derive(Debug)]
@@ -162,24 +111,18 @@ impl PartitionLog {
         if offset < start || offset > end {
             return Err(Error::OffsetOutOfRange { offset, start, end });
         }
-
-        let first = self
-            .segments
-            .partition_point(|s| s.base_offset() <= offset)
-            .saturating_sub(1);
+        let bases: Vec<u64> = self.segments.iter().map(Segment::base_offset).collect();
         let mut out = Vec::new();
         let mut used = 0;
-        for (i, seg) in self.segments.iter().enumerate().skip(first) {
-            let seg_end = self
-                .segments
-                .get(i + 1)
-                .map_or(end, |next| next.base_offset());
-            let budget = max_bytes.saturating_sub(used);
-            match seg.read(offset, seg_end, budget, out.is_empty(), &mut out)? {
-                SegmentRead::Exhausted { taken } => used += taken,
-                SegmentRead::BudgetReached { .. } => break,
-            }
-        }
+        read_across(
+            &bases,
+            offset,
+            end,
+            max_bytes,
+            &mut used,
+            &mut out,
+            |i, req, out| self.segments[i].read(req, out),
+        )?;
         Ok(out)
     }
 
@@ -240,47 +183,21 @@ struct PendingWrite {
     sizes: Vec<usize>,
 }
 
-/// Offsets de base des segments présents dans `dir`, triés.
-fn list_segment_bases(dir: &Path) -> Result<Vec<u64>> {
-    let mut bases = Vec::new();
-    for entry in fs::read_dir(dir)? {
-        let name = entry?.file_name();
-        let Some(stem) = name.to_str().and_then(|n| n.strip_suffix(".log")) else {
-            continue;
-        };
-        if stem.len() == 20 && stem.bytes().all(|b| b.is_ascii_digit()) {
-            let base = stem.parse().map_err(|_| Error::Corrupt {
-                path: segment::log_path(dir, 0).with_file_name(&name),
-                reason: "nom de segment invalide".into(),
-            })?;
-            bases.push(base);
-        }
-    }
-    bases.sort_unstable();
-    Ok(bases)
-}
-
 /// Chaque segment doit s'arrêter exactement là où commence le suivant :
 /// sinon des offsets manquent ou se chevauchent.
 fn check_continuity(dir: &Path, segments: &[Segment]) -> Result<()> {
     for pair in segments.windows(2) {
         let (current, next) = (&pair[0], &pair[1]);
         if current.next_offset() != next.base_offset() {
-            return Err(Error::Corrupt {
-                path: segment::log_path(dir, current.base_offset()),
-                reason: format!(
+            return Err(corrupt(
+                segment_log_path(dir, current.base_offset()),
+                format!(
                     "le segment se termine à l'offset {} mais le suivant commence à {}",
                     current.next_offset(),
                     next.base_offset()
                 ),
-            });
+            ));
         }
     }
-    Ok(())
-}
-
-/// Rend durable la création ou le renommage d'un fichier dans `dir`.
-fn sync_dir(dir: &Path) -> Result<()> {
-    File::open(dir)?.sync_all()?;
     Ok(())
 }
