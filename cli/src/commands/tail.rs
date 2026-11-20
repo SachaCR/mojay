@@ -17,6 +17,7 @@ const READ_BATCH_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, clap::Args)]
 pub struct Args {
+    /// Le topic à lire.
     pub topic: String,
     /// Une seule partition. Par défaut, toutes.
     #[arg(long, short)]

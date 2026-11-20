@@ -10,6 +10,7 @@ use crate::parse;
 
 #[derive(Debug, clap::Args)]
 pub struct Args {
+    /// Le topic où envoyer.
     pub topic: String,
     /// Valeur du message. Sans valeur, chaque ligne de l'entrée standard est un message.
     pub value: Option<String>,

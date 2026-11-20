@@ -39,7 +39,10 @@ enum Command {
     /// Liste les topics.
     Topics,
     /// Décrit un topic : configuration, partitions, segments, offsets des groupes.
-    Describe { topic: String },
+    Describe {
+        /// Le topic à décrire.
+        topic: String,
+    },
     /// Envoie un message, ou une ligne de l'entrée standard par message.
     Produce(commands::produce::Args),
     /// Affiche les messages d'un topic, sans rien commiter.
