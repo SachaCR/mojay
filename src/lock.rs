@@ -20,6 +20,17 @@ pub(crate) struct FileLock {
     file: File,
 }
 
+/// Résultat d'une tentative de verrouillage d'un fichier qui doit déjà exister.
+#[derive(Debug)]
+pub(crate) enum Probe {
+    /// Le fichier n'existe pas (ou plus).
+    Missing,
+    /// Quelqu'un tient le verrou.
+    Held,
+    /// Personne ne le tenait : il est maintenant à nous.
+    Acquired(FileLock),
+}
+
 impl FileLock {
     /// Tente de prendre le verrou exclusif sur `path` (créé au besoin), sans attendre.
     /// Renvoie `None` si quelqu'un d'autre le tient, y compris dans ce processus.
@@ -30,6 +41,24 @@ impl FileLock {
             .create(true)
             .truncate(false)
             .open(path)?;
+        Self::try_lock(file)
+    }
+
+    /// Comme [`try_exclusive`](Self::try_exclusive), mais sans jamais créer le
+    /// fichier : sert à savoir si le propriétaire d'un fichier est encore vivant.
+    pub(crate) fn probe(path: &Path) -> Result<Probe> {
+        let file = match OpenOptions::new().read(true).write(true).open(path) {
+            Ok(file) => file,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Probe::Missing),
+            Err(e) => return Err(e.into()),
+        };
+        Ok(match Self::try_lock(file)? {
+            Some(lock) => Probe::Acquired(lock),
+            None => Probe::Held,
+        })
+    }
+
+    fn try_lock(file: File) -> Result<Option<Self>> {
         match flock(&file, FlockOperation::NonBlockingLockExclusive) {
             Ok(()) => Ok(Some(Self { file })),
             Err(Errno::WOULDBLOCK) => Ok(None),
@@ -65,5 +94,21 @@ mod tests {
         assert!(FileLock::try_exclusive(&path).unwrap().is_none());
         drop(first);
         assert!(FileLock::try_exclusive(&path).unwrap().is_some());
+    }
+
+    #[test]
+    fn probe_tells_missing_held_and_free_apart() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("member.lock");
+        assert!(matches!(FileLock::probe(&path).unwrap(), Probe::Missing));
+        assert!(!path.exists(), "la sonde ne crée jamais le fichier");
+
+        let held = FileLock::try_exclusive(&path).unwrap().unwrap();
+        assert!(matches!(FileLock::probe(&path).unwrap(), Probe::Held));
+        drop(held);
+        assert!(matches!(
+            FileLock::probe(&path).unwrap(),
+            Probe::Acquired(_)
+        ));
     }
 }

@@ -1,58 +1,28 @@
 //! Un membre d'un consumer group : il possède des partitions, les lit, et
-//! commite sa position dans chacune.
+//! commite sa position dans chacune. Il se répartit les partitions avec les
+//! autres membres vivants, sans coordinateur.
 
 use std::path::Path;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::{GroupPaths, offsets};
+use super::config::{ConsumerConfig, StartFrom};
+use super::membership::Membership;
+use super::{GroupPaths, offsets, quota};
 use crate::error::{Error, Result};
 use crate::lock::FileLock;
 use crate::record::{Header, Record};
 use crate::topic::TopicReader;
 
-/// Délai minimal entre deux tentatives de prise de partitions libres.
-const CLAIM_INTERVAL: Duration = Duration::from_millis(200);
+/// Délai entre deux répartitions : c'est aussi le délai de réaction à
+/// l'arrivée ou au départ d'un membre.
+const REBALANCE_INTERVAL: Duration = Duration::from_millis(200);
 /// Attente entre deux vérifications quand il n'y a rien à lire : elle double
 /// de `MIN_WAIT` à `MAX_WAIT` tant que rien n'arrive.
 const MIN_WAIT: Duration = Duration::from_millis(1);
 const MAX_WAIT: Duration = Duration::from_millis(50);
 /// Surcoût estimé d'un enregistrement, en plus de sa clé, sa valeur et ses headers.
 const RECORD_OVERHEAD: usize = 32;
-
-/// Où commencer à lire une partition sans offset commité utilisable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StartFrom {
-    /// Au plus ancien message disponible.
-    Earliest,
-    /// Après le dernier message lisible : seuls les nouveaux messages seront lus.
-    Latest,
-}
-
-/// Configuration d'un consumer.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ConsumerConfig {
-    /// Où commencer quand le groupe n'a rien commité pour une partition, ou
-    /// quand l'offset commité n'existe plus (supprimé par la rétention).
-    pub start_from: StartFrom,
-    /// `Some(intervalle)` : les positions sont commitées automatiquement, au
-    /// plus tôt à cet intervalle, au début de chaque `poll` et à la fermeture.
-    /// Tout message rendu par un `poll` est alors considéré comme traité au
-    /// `poll` suivant. `None` : commit manuel avec [`Consumer::commit`].
-    pub auto_commit: Option<Duration>,
-    /// Taille approximative maximale des messages rendus par un `poll`.
-    pub max_poll_bytes: usize,
-}
-
-impl Default for ConsumerConfig {
-    fn default() -> Self {
-        Self {
-            start_from: StartFrom::Earliest,
-            auto_commit: None,
-            max_poll_bytes: 1024 * 1024,
-        }
-    }
-}
 
 /// Un message lu par un consumer, avec sa provenance.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,6 +60,15 @@ impl ConsumerRecord {
     }
 }
 
+/// Un changement dans les partitions possédées par un consumer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RebalanceEvent {
+    /// Le consumer possède désormais cette partition.
+    Assigned { topic: String, partition: u32 },
+    /// Le consumer a cédé cette partition à un autre membre du groupe.
+    Revoked { topic: String, partition: u32 },
+}
+
 /// Un topic auquel le consumer est abonné.
 #[derive(Debug)]
 struct Subscription {
@@ -112,12 +91,18 @@ struct OwnedPartition {
 
 /// Un membre d'un consumer group.
 ///
-/// Il possède les partitions dont il tient le verrou, et lui seul les lit pour
-/// son groupe. Livraison *at-least-once* : après un crash, les messages rendus
-/// depuis le dernier commit sont relus.
+/// Les membres vivants d'un groupe se répartissent ses partitions : chacun
+/// possède celles dont il tient le verrou, et lui seul les lit pour le groupe.
+/// À chaque `poll` (au plus toutes les 200 ms), un membre compte les vivants,
+/// cède ce qu'il a en trop et prend des partitions libres s'il lui en manque.
 ///
-/// À l'étape 3, un membre prend toutes les partitions libres. Un second membre
-/// du même groupe attend et prend le relais dès qu'elles se libèrent.
+/// Livraison *at-least-once* : après un crash, les messages rendus depuis le
+/// dernier commit sont relus. Un membre qui n'appelle plus `poll` garde ses
+/// partitions tant qu'il vit.
+///
+/// Les membres d'un même groupe doivent s'abonner aux mêmes topics : sinon la
+/// répartition reste correcte (jamais deux lecteurs par partition), mais n'est
+/// plus équilibrée.
 #[derive(Debug)]
 pub struct Consumer {
     group: String,
@@ -129,8 +114,11 @@ pub struct Consumer {
     /// Partition par laquelle commencer le prochain `poll`, pour servir
     /// toutes les partitions à tour de rôle.
     next_to_serve: usize,
-    last_claim: Option<Instant>,
+    events: Vec<RebalanceEvent>,
+    last_rebalance: Option<Instant>,
     last_commit: Instant,
+    /// Déclaré après `owned` : les partitions sont relâchées avant le départ du groupe.
+    membership: Membership,
 }
 
 impl Consumer {
@@ -145,32 +133,36 @@ impl Consumer {
                 "un consumer doit s'abonner à au moins un topic".into(),
             ));
         }
-        let mut names: Vec<&str> = readers.iter().map(TopicReader::topic).collect();
-        names.sort_unstable();
-        if names.windows(2).any(|w| w[0] == w[1]) {
-            return Err(Error::InvalidConfig(
-                "topic en double dans l'abonnement".into(),
-            ));
-        }
-
-        let topics = readers
+        let mut topics: Vec<Subscription> = readers
             .into_iter()
             .map(|reader| Subscription {
                 name: reader.topic().to_string(),
                 reader,
             })
             .collect();
+        // Le même ordre chez tous les membres : il fixe l'ordre des partitions.
+        topics.sort_by(|a, b| a.name.cmp(&b.name));
+        if topics.windows(2).any(|w| w[0].name == w[1].name) {
+            return Err(Error::InvalidConfig(
+                "topic en double dans l'abonnement".into(),
+            ));
+        }
+
+        let paths = GroupPaths::open(groups_dir, group)?;
+        let membership = Membership::join(&paths.dir)?;
         let mut consumer = Self {
             group: group.to_string(),
-            paths: GroupPaths::open(groups_dir, group)?,
+            paths,
             config,
             topics,
             owned: Vec::new(),
             next_to_serve: 0,
-            last_claim: None,
+            events: Vec::new(),
+            last_rebalance: None,
             last_commit: Instant::now(),
+            membership,
         };
-        consumer.claim_free_partitions()?;
+        consumer.rebalance()?;
         Ok(consumer)
     }
 
@@ -194,6 +186,14 @@ impl Consumer {
             .map(|o| o.position)
     }
 
+    /// Les partitions reçues ou cédées depuis le dernier appel, dans l'ordre.
+    ///
+    /// En commit manuel, une partition cédée reprendra chez son nouveau
+    /// propriétaire au dernier commit : commiter avant chaque `poll` évite ces relectures.
+    pub fn take_rebalance_events(&mut self) -> Vec<RebalanceEvent> {
+        std::mem::take(&mut self.events)
+    }
+
     /// Attend au plus `timeout` des messages, et les rend dès qu'il y en a.
     ///
     /// Renvoie une liste vide si rien n'est arrivé à temps. Les partitions de
@@ -203,8 +203,8 @@ impl Consumer {
         let deadline = Instant::now() + timeout;
         let mut wait = MIN_WAIT;
         loop {
-            if self.claim_is_due() {
-                self.claim_free_partitions()?;
+            if self.rebalance_is_due() {
+                self.rebalance()?;
             }
             let records = self.fetch()?;
             if !records.is_empty() {
@@ -222,19 +222,26 @@ impl Consumer {
     /// Commite la position de chaque partition possédée : tous les messages
     /// déjà rendus par `poll` sont considérés comme traités.
     ///
-    /// Chaque offset est écrit de façon atomique et durable.
+    /// Chaque offset est écrit de façon atomique et durable. Seules les
+    /// partitions encore possédées sont commitées : une partition cédée
+    /// appartient à son nouveau propriétaire.
     pub fn commit(&mut self) -> Result<()> {
-        for owned in &mut self.owned {
-            if owned.committed != Some(owned.position) {
-                let topic = &self.topics[owned.topic].name;
-                offsets::write(
-                    &self.paths.committed_offset(topic, owned.partition),
-                    owned.position,
-                )?;
-                owned.committed = Some(owned.position);
-            }
+        for i in 0..self.owned.len() {
+            self.commit_owned(i)?;
         }
         self.last_commit = Instant::now();
+        Ok(())
+    }
+
+    fn commit_owned(&mut self, i: usize) -> Result<()> {
+        let owned = &mut self.owned[i];
+        if owned.committed != Some(owned.position) {
+            let path = self
+                .paths
+                .committed_offset(&self.topics[owned.topic].name, owned.partition);
+            offsets::write(&path, owned.position)?;
+            owned.committed = Some(owned.position);
+        }
         Ok(())
     }
 
@@ -245,52 +252,97 @@ impl Consumer {
         }
     }
 
-    fn total_partitions(&self) -> usize {
+    fn rebalance_is_due(&self) -> bool {
+        self.last_rebalance
+            .is_none_or(|at| at.elapsed() >= REBALANCE_INTERVAL)
+    }
+
+    /// Ajuste les partitions possédées à la part de ce membre : cède le
+    /// surplus, puis prend des partitions libres s'il en manque.
+    fn rebalance(&mut self) -> Result<()> {
+        self.last_rebalance = Some(Instant::now());
+        let members = self.membership.living_members()?;
+        let rank = members
+            .iter()
+            .position(|m| m == self.membership.id())
+            .unwrap_or(members.len());
+        let all = self.all_partitions();
+        let quota = quota::quota(all.len(), members.len(), rank);
+
+        while self.owned.len() > quota {
+            self.release_last()?;
+        }
+        if self.owned.len() < quota {
+            let start = quota::claim_start(all.len(), members.len(), rank);
+            for k in 0..all.len() {
+                if self.owned.len() >= quota {
+                    break;
+                }
+                let (topic, partition) = all[(start + k) % all.len()];
+                self.try_claim(topic, partition)?;
+            }
+            self.owned.sort_by_key(|o| (o.topic, o.partition));
+        }
+        Ok(())
+    }
+
+    /// Toutes les partitions des topics suivis, dans le même ordre chez tous
+    /// les membres (topics triés par nom).
+    fn all_partitions(&self) -> Vec<(usize, u32)> {
         self.topics
             .iter()
-            .map(|t| t.reader.partitions() as usize)
-            .sum()
+            .enumerate()
+            .flat_map(|(t, sub)| (0..sub.reader.partitions()).map(move |p| (t, p)))
+            .collect()
     }
 
-    fn claim_is_due(&self) -> bool {
-        self.owned.len() < self.total_partitions()
-            && self
-                .last_claim
-                .is_none_or(|at| at.elapsed() >= CLAIM_INTERVAL)
-    }
-
-    /// Prend le verrou de chaque partition libre, puis reprend à son offset
-    /// commité. L'offset est lu *après* la prise du verrou : le membre
-    /// précédent a commité avant de relâcher, rien n'est donc relu en double.
-    fn claim_free_partitions(&mut self) -> Result<()> {
-        self.last_claim = Some(Instant::now());
-        for topic in 0..self.topics.len() {
-            for partition in 0..self.topics[topic].reader.partitions() {
-                if self
-                    .owned
-                    .iter()
-                    .any(|o| o.topic == topic && o.partition == partition)
-                {
-                    continue;
-                }
-                let name = &self.topics[topic].name;
-                let Some(lock) =
-                    FileLock::try_exclusive(&self.paths.partition_lock(name, partition))?
-                else {
-                    continue;
-                };
-                let committed = offsets::read(&self.paths.committed_offset(name, partition))?;
-                let position = self.start_position(topic, partition, committed)?;
-                self.owned.push(OwnedPartition {
-                    topic,
-                    partition,
-                    position,
-                    committed,
-                    _lock: lock,
-                });
-            }
+    /// Cède la dernière partition possédée. Avec le commit automatique, sa
+    /// position est commitée *avant* de relâcher le verrou : le membre suivant
+    /// reprend exactement là, sans doublon.
+    fn release_last(&mut self) -> Result<()> {
+        let last = self.owned.len() - 1;
+        if self.config.auto_commit.is_some() {
+            self.commit_owned(last)?;
         }
-        self.owned.sort_by_key(|o| (o.topic, o.partition));
+        if let Some(owned) = self.owned.pop() {
+            self.events.push(RebalanceEvent::Revoked {
+                topic: self.topics[owned.topic].name.clone(),
+                partition: owned.partition,
+            });
+            // Le verrou est relâché ici, en détruisant `owned`.
+        }
+        Ok(())
+    }
+
+    /// Prend la partition si elle est libre, et reprend à son offset commité.
+    /// L'offset est lu *après* la prise du verrou : le membre précédent a
+    /// fini d'écrire le sien avant de relâcher.
+    fn try_claim(&mut self, topic: usize, partition: u32) -> Result<()> {
+        if self
+            .owned
+            .iter()
+            .any(|o| o.topic == topic && o.partition == partition)
+        {
+            return Ok(());
+        }
+        let name = &self.topics[topic].name;
+        let Some(lock) = FileLock::try_exclusive(&self.paths.partition_lock(name, partition))?
+        else {
+            return Ok(());
+        };
+        let committed = offsets::read(&self.paths.committed_offset(name, partition))?;
+        let position = self.start_position(topic, partition, committed)?;
+        self.events.push(RebalanceEvent::Assigned {
+            topic: name.clone(),
+            partition,
+        });
+        self.owned.push(OwnedPartition {
+            topic,
+            partition,
+            position,
+            committed,
+            _lock: lock,
+        });
         Ok(())
     }
 
@@ -362,6 +414,7 @@ impl Consumer {
 impl Drop for Consumer {
     /// Avec le commit automatique, commite avant de relâcher les partitions :
     /// le membre suivant reprend exactement là où celui-ci s'est arrêté.
+    /// Les partitions sont ensuite relâchées, puis le membre quitte le groupe.
     fn drop(&mut self) {
         if self.config.auto_commit.is_some() {
             // Une erreur ici ne peut plus être rendue : au pire, les messages

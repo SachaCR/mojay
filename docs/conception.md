@@ -107,7 +107,7 @@ Un topic accepte autant de consumers que voulu, sans aucun verrou en lecture. Le
 
 - **Lecture** : les segments sont lus par `pread`, par gros blocs. Le `mmap` ne sert qu'au fichier `read_limits`. Aucune lecture ne dépasse la limite de lecture. Le log est append-only, donc lire pendant une écriture est sûr.
 - **Écriture en cours** : juste après la limite de lecture, le writer peut être en train d'écrire. Un enregistrement illisible à cet endroit n'est donc pas une erreur ; avant la limite, c'en est une. Le lecteur ne répare jamais rien, et découvre seul les nouveaux segments.
-- **Consumer seul** : un groupe à un membre, qui reçoit donc toutes les partitions. Depuis l'étape 3, un second membre du même groupe attend et reprend les partitions dès qu'elles se libèrent (arrêt ou crash du premier). À l'étape 4, les membres vivants se les répartiront, comme dans Kafka.
+- **Consumer seul** : un groupe à un membre, qui reçoit donc toutes les partitions. Si un second processus ouvre le même nom, il rejoint le groupe et les membres vivants se répartissent les partitions (voir ci-dessous).
 - **Offsets** : `groups/<group>/offsets/<topic>-<p>` fait 12 octets : l'offset (`u64`) puis son CRC32C (`u32`). Il n'est écrit que par le détenteur du verrou de la partition. Le commit est manuel (`commit()`), ou automatique : au plus tôt à l'intervalle choisi, au début de chaque `poll` et à la fermeture. Les messages rendus par un `poll` sont alors considérés comme traités au `poll` suivant.
 - **Point de départ** : sans offset commité, on part du début (`Earliest`) ou de la fin (`Latest`). Un offset commité au-delà de la limite de lecture (messages perdus avec `fsync` `Never` ou `Interval`) est ramené à la limite, pour ne sauter aucun nouveau message.
 - **Offset disparu** : si la rétention a supprimé l'offset demandé, la même politique s'applique.
@@ -133,12 +133,19 @@ flowchart LR
     consume -- "itération suivante" --> count
 ```
 
-1. **Compter les vivants** : on tente un `flock` non bloquant sur chaque fichier de `members/`. S'il réussit, le membre est mort et on supprime son fichier. On obtient N membres vivants, triés par identifiant.
+1. **Compter les vivants** : on tente un `flock` non bloquant sur chaque fichier de `members/`. S'il réussit, le membre est mort et on supprime son fichier. On obtient N membres vivants, triés par identifiant. L'identifiant commence par l'instant d'inscription : le rang 0 est le membre le plus ancien.
 2. **Calculer son quota** : avec P partitions et un rang r parmi les vivants, quota = ⌊P / N⌋, plus 1 si r < P mod N. La somme des quotas vaut exactement P.
-3. **Au-dessus du quota** : on commit l'offset, puis on relâche le verrou des partitions en trop.
+3. **Au-dessus du quota** : on relâche le verrou des partitions en trop. Avec le commit automatique, on commite d'abord leur position (voir « Passage de relais »).
 4. **Sous le quota** : on tente un `flock` non bloquant sur les partitions libres, en partant d'un index dérivé de son rang pour limiter les collisions. Pour chaque partition obtenue, on lit l'offset commité du groupe.
 
-**Passage de relais** : on commit avant de relâcher et on lit l'offset après avoir pris le verrou. Un rebalance normal ne produit donc aucun doublon. Seul un crash rejoue les messages depuis le dernier commit.
+**Passage de relais** : on lit toujours l'offset commité *après* avoir pris le verrou.
+
+- **Commit automatique** : on commite la position avant de relâcher. Un rebalance normal ne produit donc aucun doublon ; seul un crash rejoue les messages depuis le dernier commit.
+- **Commit manuel** : on relâche *sans* commiter. Commiter à la place de l'application pourrait marquer comme traités des messages qu'elle garde encore en mémoire, et donc les perdre. Le nouveau propriétaire relit depuis le dernier commit : doublons possibles, aucune perte. Pour les éviter, l'application commite avant chaque `poll`.
+
+**Événements** : `take_rebalance_events()` rend les partitions reçues (`Assigned`) et cédées (`Revoked`) depuis le dernier appel. C'est plus simple à utiliser en Rust que des callbacks, et suffit à l'application pour savoir ce qu'elle a perdu.
+
+**Limites** : un membre qui n'appelle plus `poll` garde ses partitions tant qu'il vit (pas de délai d'expiration). Les membres d'un groupe doivent s'abonner aux mêmes topics : sinon la répartition reste sûre (jamais deux lecteurs par partition) mais n'est plus équilibrée.
 
 **Inscription sans course** : un nouveau membre crée son fichier sous un nom temporaire, le verrouille, puis le renomme dans `members/`. Le verrou suit l'inode, donc personne ne voit jamais ce fichier sans verrou et ne le prend pour celui d'un membre mort.
 
@@ -173,7 +180,7 @@ loop {
 
 - **Lecture brute** (disponible depuis l'étape 2) : `db.reader(topic)` renvoie un `TopicReader`, qui lit une partition à partir d'un offset, sans verrou et sans dépasser la limite de lecture. Les consumers de l'étape 3 s'appuient dessus.
 - **Administration** : `list_topics`, `describe_topic` (partitions, premier offset, limite de lecture), `delete_topic`.
-- **Rebalance** : des callbacks `on_assigned` et `on_revoked` préviennent l'application quand elle gagne ou perd une partition.
+- **Rebalance** : `consumer.take_rebalance_events()` rend les partitions reçues et cédées ; `consumer.assignment()` donne les partitions possédées.
 - **Erreurs** : `Busy`, `TopicExists`, `UnknownTopic`, `OffsetOutOfRange`, `Corrupt`, `Io`.
 
 ## Garanties et limites
@@ -209,7 +216,7 @@ Le MVP se construit de bas en haut. Chaque étape est testable seule, en commen�
 1. ✅ Log d'une partition : format, segments, index, récupération. Tests de crash par troncature à chaque octet de la fin du log.
 2. ✅ Topics, writer verrouillé et limites de lecture partagées. Tests multi-processus : second writer refusé, writer tué en pleine écriture, lecteur qui suit un writer d'un autre processus.
 3. ✅ Consumer seul : lecture et offsets commités, commit manuel ou automatique, relais vers un second membre à l'arrêt ou au crash du premier. Tests multi-processus : membre tué, reprise exacte au dernier commit.
-4. Consumer groups à plusieurs membres.
+4. ✅ Consumer groups à plusieurs membres : quotas, arrivées et départs, détection des membres morts, événements de rebalance. Tests multi-processus : deux processus se partagent le travail sans doublon, un membre tué est remplacé.
 5. Rétention par taille et par durée.
 6. CLI `mojay` pour déboguer : `create-topic`, `produce`, `tail`, `describe`, et `dump`, qui affiche un segment en texte (offsets, positions, CRC, clés, valeurs) pour vérifier à l'œil ce qui est stocké.
 7. ABI C, puis un premier binding Python.
@@ -229,3 +236,5 @@ Après la V1 : index temporel (positionnement par timestamp), compression, compa
 | Windows | Hors périmètre de la V1 |
 | Voir les messages en texte | `mojay dump` (étape 6) plutôt qu'un second format de stockage : un seul format à fiabiliser |
 | Commit par défaut | Manuel ; automatique sur demande (`auto_commit`) |
+| Commit d'une partition cédée | Seulement en commit automatique ; en manuel, relecture depuis le dernier commit plutôt qu'un risque de perte |
+| Notification des rebalances | `take_rebalance_events()` plutôt que des callbacks |

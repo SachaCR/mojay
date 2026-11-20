@@ -287,19 +287,20 @@ fn max_poll_bytes_splits_large_backlogs_without_losing_any() {
 // Relais entre membres
 // ---------------------------------------------------------------------------
 
+/// Avec une seule partition, le second membre n'a rien tant que le premier
+/// vit, puis la reprend exactement au commit quand le premier s'en va.
 #[test]
-fn second_member_waits_then_takes_over_from_the_commit() {
+fn departing_member_hands_over_from_its_commit() {
     let (_dir, db) = new_db();
-    db.create_topic("stream", config(2, 1 << 20, FsyncPolicy::Always))
-        .unwrap();
+    db.create_topic("stream", TopicConfig::default()).unwrap();
     produce(&db, "stream", 0..10);
 
     let mut first = db.consumer("billing", &["stream"], manual()).unwrap();
     let mut second = db.consumer("billing", &["stream"], manual()).unwrap();
-    assert_eq!(first.assignment().len(), 2);
+    assert_eq!(first.assignment().len(), 1);
     assert!(
         second.assignment().is_empty(),
-        "les partitions sont déjà prises"
+        "la partition est déjà prise"
     );
     assert_nothing_more(&mut second);
 
@@ -309,7 +310,7 @@ fn second_member_waits_then_takes_over_from_the_commit() {
 
     produce(&db, "stream", 10..12);
     let records = poll_exactly(&mut second, 2);
-    assert_eq!(second.assignment().len(), 2);
+    assert_eq!(second.assignment().len(), 1);
     assert_eq!(
         offsets(&records),
         vec![10, 11],

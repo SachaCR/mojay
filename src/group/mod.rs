@@ -2,6 +2,7 @@
 //!
 //! ```text
 //! groups/<group>/
+//!   members/<id>.lock             # flock tenu = membre vivant
 //!   partitions/<topic>-<p>.lock   # flock tenu = partition possédée par un membre
 //!   offsets/<topic>-<p>           # offset commité du groupe pour cette partition
 //! ```
@@ -9,18 +10,21 @@
 //! Tout consumer appartient à un groupe ; un consumer seul est l'unique membre
 //! du groupe qui porte son nom.
 //!
-//! Étape 3 de la feuille de route : un membre prend toutes les partitions
-//! libres. Un second membre du même groupe attend, et reprend les partitions
-//! dès qu'elles se libèrent (arrêt ou crash du premier). Le partage équitable
-//! entre membres vivants arrive à l'étape 4.
+//! Les membres vivants se répartissent les partitions (voir [`Consumer`]) :
+//! le membre de rang r parmi N vivants en possède ⌊P / N⌋, plus une si
+//! r < P mod N.
 
+mod config;
 mod consumer;
+mod membership;
 mod offsets;
+mod quota;
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub use consumer::{Consumer, ConsumerConfig, ConsumerRecord, StartFrom};
+pub use config::{ConsumerConfig, StartFrom};
+pub use consumer::{Consumer, ConsumerRecord, RebalanceEvent};
 
 use crate::error::Result;
 use crate::topic::validate_name;

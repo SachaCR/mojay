@@ -20,13 +20,14 @@ Les couches ne dépendent que des couches en dessous d'elles, jamais l'inverse.
 | Stockage | `segment` | Un fichier `.log` et son index, la récupération | Ne connaît ni topic ni partition |
 | Partition | `log` | Une suite de segments, la rotation, la politique fsync | Aucun verrou inter-processus |
 | Topic | `topic` | Partitions, verrou du writer, limites de lecture | Ne lit pas d'octets bruts |
-| Groupes | `group` | Consumers, possession des partitions, offsets commités | Ne touche pas aux segments |
+| Groupes | `group` | Consumers, membres, répartition des partitions, offsets commités | Ne touche pas aux segments |
 | API | `db` | Le point d'entrée public | Aucune logique métier propre |
 
 Modules de support, chacun avec une seule responsabilité :
 
 - `index` (logique pure) : format et règle de l'index clairsemé d'un segment.
 - `partitioner` (logique pure) : choix de la partition, murmur2 compatible Kafka.
+- `group::quota` (logique pure) : part de chaque membre d'un groupe.
 - `meta` : fichiers `clé = valeur` (`mojay.toml`, `meta.toml`), lecture stricte.
 - `read_limits` : les limites de lecture partagées en `mmap`. Seul module `unsafe`.
 - `lock` : verrous `flock` inter-processus.
