@@ -189,7 +189,8 @@ loop {
 ```
 
 - **Lecture brute** (disponible depuis l'étape 2) : `db.reader(topic)` renvoie un `TopicReader`, qui lit une partition à partir d'un offset, sans verrou et sans dépasser la limite de lecture. Les consumers de l'étape 3 s'appuient dessus.
-- **Administration** : `list_topics`, `describe_topic` (partitions, premier offset, limite de lecture), `delete_topic`.
+- **Administration** : `list_topics`, `describe_topic` (configuration, et pour chaque partition son premier offset, sa limite de lecture et ses segments), `committed_offsets` (offsets commités par chaque groupe). `delete_topic` reste à faire.
+- **Inspection** : `mojay::inspect::dump_segment` lit un segment brut, sans rien réparer, et rapporte une éventuelle fin illisible au lieu d'échouer.
 - **Rebalance** : `consumer.take_rebalance_events()` rend les partitions reçues et cédées ; `consumer.assignment()` donne les partitions possédées.
 - **Erreurs** : `Busy`, `TopicExists`, `UnknownTopic`, `OffsetOutOfRange`, `Corrupt`, `Io`.
 
@@ -228,7 +229,18 @@ Le MVP se construit de bas en haut. Chaque étape est testable seule, en commen�
 3. ✅ Consumer seul : lecture et offsets commités, commit manuel ou automatique, relais vers un second membre à l'arrêt ou au crash du premier. Tests multi-processus : membre tué, reprise exacte au dernier commit.
 4. ✅ Consumer groups à plusieurs membres : quotas, arrivées et départs, détection des membres morts, événements de rebalance. Tests multi-processus : deux processus se partagent le travail sans doublon, un membre tué est remplacé.
 5. ✅ Rétention par taille et par durée : suppression des plus vieux segments scellés, lecteurs qui relâchent les fichiers supprimés, consumers en retard qui repartent du nouveau début.
-6. CLI `mojay` pour déboguer : `create-topic`, `produce`, `tail`, `describe`, et `dump`, qui affiche un segment en texte (offsets, positions, CRC, clés, valeurs) pour vérifier à l'œil ce qui est stocké.
+6. ✅ CLI `mojay`, une crate séparée du workspace pour ne pas imposer `clap` à la bibliothèque :
+
+    | Commande | Rôle |
+    | --- | --- |
+    | `create-topic` | Crée un topic, avec des unités lisibles (`--segment-size 64Mio`, `--fsync 100ms`, `--retention-time 7d`) |
+    | `topics` | Liste les topics |
+    | `describe` | Configuration, partitions (début, limite, segments, taille) et retard de chaque groupe |
+    | `produce` | Envoie un message, ou une ligne de l'entrée standard par message, avec clé, partition et headers |
+    | `tail` | Affiche les messages sans rien commiter : depuis le début, `-n` derniers, `--offset`, `-f` pour suivre |
+    | `dump` | Affiche un segment en texte (positions, offsets, tailles, contenu, index) et signale une fin illisible sans rien réparer |
+
+    Le dossier vient de `--data` ou de `MOJAY_DATA`. Seule `create-topic` crée un dossier de données : une faute de frappe ne doit pas en créer un vide ailleurs.
 7. ABI C, puis un premier binding Python.
 
 Après la V1 : index temporel (positionnement par timestamp), compression, compaction par clé, notification événementielle, couche protocole Kafka.

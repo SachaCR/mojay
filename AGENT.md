@@ -22,6 +22,7 @@ Les couches ne dépendent que des couches en dessous d'elles, jamais l'inverse.
 | Topic | `topic` | Partitions, verrou du writer, limites de lecture | Ne lit pas d'octets bruts |
 | Groupes | `group` | Consumers, membres, répartition des partitions, offsets commités | Ne touche pas aux segments |
 | API | `db` | Le point d'entrée public | Aucune logique métier propre |
+| CLI | crate `cli/` | Arguments, affichage, une commande par fichier | Ne lit jamais les fichiers de données : passe par la bibliothèque |
 
 Modules de support, chacun avec une seule responsabilité :
 
@@ -33,6 +34,10 @@ Modules de support, chacun avec une seule responsabilité :
 - `read_limits` : les limites de lecture partagées en `mmap`. Seul module `unsafe`.
 - `lock` : verrous `flock` inter-processus.
 - `durable` : écritures atomiques et `fsync` de dossier.
+- `inspect` : lecture brute d'un segment pour `mojay dump`, sans jamais rien réparer.
+
+La CLI est une crate séparée du workspace : ses dépendances (`clap`) ne sont pas
+imposées aux utilisateurs de la bibliothèque.
 
 - Un module expose le minimum : `pub(crate)` par défaut, `pub` seulement pour l'API publique.
 - La logique pure (calculs, encodage, quotas d'un groupe) est séparée des effets
@@ -100,8 +105,8 @@ Modules de support, chacun avec une seule responsabilité :
 
 ```bash
 cargo fmt --all
-cargo clippy --all-targets -- -D warnings
-cargo test
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
 ```
 
 Les trois doivent passer sans avertissement. Les dépendances restent minimales :

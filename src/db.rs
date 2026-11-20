@@ -13,9 +13,9 @@ use std::path::{Path, PathBuf};
 
 use crate::durable::write_atomic;
 use crate::error::{Error, Result, corrupt};
-use crate::group::{Consumer, ConsumerConfig};
+use crate::group::{self, CommittedOffset, Consumer, ConsumerConfig};
 use crate::meta::{self, Meta, Value};
-use crate::topic::{self, Producer, TopicConfig, TopicReader};
+use crate::topic::{self, Producer, TopicConfig, TopicDescription, TopicReader};
 
 const META_FILE: &str = "mojay.toml";
 const TOPICS_DIR: &str = "topics";
@@ -101,6 +101,18 @@ impl Db {
             .map(|topic| self.reader(topic))
             .collect::<Result<_>>()?;
         Consumer::open(&self.root.join(GROUPS_DIR), group, readers, config)
+    }
+
+    /// Décrit un topic : configuration, offsets lisibles et segments de chaque
+    /// partition. Ne modifie rien.
+    pub fn describe_topic(&self, topic: &str) -> Result<TopicDescription> {
+        topic::describe(&self.existing_topic_dir(topic)?, topic)
+    }
+
+    /// Les offsets commités pour `topic` par tous les groupes. Ne modifie rien.
+    pub fn committed_offsets(&self, topic: &str) -> Result<Vec<CommittedOffset>> {
+        let partitions = self.describe_topic(topic)?.config.partitions;
+        group::committed_offsets(&self.root.join(GROUPS_DIR), topic, partitions)
     }
 
     fn topics_dir(&self) -> PathBuf {

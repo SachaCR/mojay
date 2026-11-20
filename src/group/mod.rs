@@ -16,6 +16,7 @@
 
 mod config;
 mod consumer;
+mod describe;
 mod membership;
 mod offsets;
 mod quota;
@@ -25,6 +26,8 @@ use std::path::{Path, PathBuf};
 
 pub use config::{ConsumerConfig, StartFrom};
 pub use consumer::{Consumer, ConsumerRecord, RebalanceEvent};
+pub use describe::CommittedOffset;
+pub(crate) use describe::committed_offsets;
 
 use crate::error::Result;
 use crate::topic::validate_name;

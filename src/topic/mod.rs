@@ -13,6 +13,7 @@
 //! - [`TopicReader`] : un lecteur, sans verrou, autant qu'on veut.
 
 mod background_sync;
+mod describe;
 mod producer;
 mod reader;
 
@@ -21,6 +22,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+pub(crate) use describe::describe;
+pub use describe::{PartitionDescription, SegmentDescription, TopicDescription};
 pub use producer::Producer;
 pub use reader::TopicReader;
 

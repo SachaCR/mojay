@@ -27,6 +27,7 @@ mod durable;
 mod error;
 mod group;
 mod index;
+pub mod inspect;
 mod lock;
 mod log;
 mod meta;
@@ -38,7 +39,11 @@ mod topic;
 
 pub use db::Db;
 pub use error::{Error, Result};
-pub use group::{Consumer, ConsumerConfig, ConsumerRecord, RebalanceEvent, StartFrom};
+pub use group::{
+    CommittedOffset, Consumer, ConsumerConfig, ConsumerRecord, RebalanceEvent, StartFrom,
+};
 pub use log::{FsyncPolicy, LogConfig, PartitionLog, Retention};
 pub use record::{Header, MAX_RECORD_SIZE, Message, Record};
-pub use topic::{Producer, TopicConfig, TopicReader};
+pub use topic::{
+    PartitionDescription, Producer, SegmentDescription, TopicConfig, TopicDescription, TopicReader,
+};

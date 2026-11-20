@@ -141,18 +141,22 @@ fn header_bytes() -> [u8; HEADER_SIZE as usize] {
 fn check_header(log: &File, path: &Path) -> Result<()> {
     let mut h = [0u8; HEADER_SIZE as usize];
     log.read_exact_at(&mut h, 0)?;
+    parse_header(&h)
+        .map(|_| ())
+        .map_err(|reason| corrupt(path, reason))
+}
+
+/// Vérifie l'en-tête d'un segment et renvoie sa version de format.
+pub(crate) fn parse_header(bytes: &[u8]) -> std::result::Result<u16, String> {
+    let Some(h) = bytes.get(..HEADER_SIZE as usize) else {
+        return Err(format!("{} octets, en-tête incomplet", bytes.len()));
+    };
     if &h[..6] != MAGIC {
-        return Err(corrupt(
-            path,
-            "magic invalide, ce n'est pas un segment Mojay",
-        ));
+        return Err("magic invalide, ce n'est pas un segment Mojay".into());
     }
     let version = u16::from_le_bytes([h[6], h[7]]);
     if version != FORMAT_VERSION {
-        return Err(corrupt(
-            path,
-            format!("version de format {version} non supportée"),
-        ));
+        return Err(format!("version de format {version} non supportée"));
     }
-    Ok(())
+    Ok(version)
 }
