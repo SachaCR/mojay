@@ -82,9 +82,14 @@ writes to a topic, its old segments stay on disk until a producer opens it.
 ## Readers and deleted segments
 
 On Linux and macOS, a file that is deleted while a process has it open keeps its
-disk space until the process closes it. Readers and consumers that keep reading
-notice deleted segments within 500 ms and close them, so the space is actually
-freed.
+disk space until the process closes it. Readers and consumers notice deleted
+segments within 500 ms and close them, so the space is actually freed. They
+check every partition, even those they do not read, on each `TopicReader::read`
+and during each `Consumer::poll`, even when there is nothing new to read.
+
+A reader or consumer that is no longer called keeps its files open until its
+next call, or until it is dropped. Call `poll` regularly, or drop consumers
+that have stopped reading.
 
 ## Consumers that fall behind
 

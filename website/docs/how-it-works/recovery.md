@@ -48,7 +48,7 @@ A reader (`TopicReader`, or a consumer) takes no lock and never writes to a segm
 - **Before the read limit**, every record is complete and, with `fsync = always`, on disk. An unreadable record there is an error (`Error::Corrupt`).
 - **At or after the read limit**, a writer may be writing right now. An incomplete record there is normal, and the reader simply stops.
 
-A missing or truncated index only slows a reader down: it keeps the consistent entries and scans the log from the last usable one, or from the start of the segment.
+A missing, truncated or wrong index only slows a reader down. It keeps the consistent entries, checks that the entry it starts from points at the record it names, and otherwise steps back to the previous entry, down to the start of the segment. It never repairs the index file: only a writer does.
 
 ## Other files
 

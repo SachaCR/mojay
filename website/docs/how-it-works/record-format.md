@@ -83,14 +83,14 @@ The `.log` is written before the index, so an entry never points to a record tha
 
 ### The index is a cache
 
-Everything in the index can be rebuilt from the `.log`, so a missing or damaged index never loses data. When an index is loaded, only its longest consistent prefix is kept: positions must lie between the end of the header and the end of the log, and both offsets and positions must strictly increase. On recovery, the writer also checks that the last kept entries point to a real record carrying the expected offset, and rebuilds the rest by scanning the log. See [Crash recovery](./recovery.md).
+Everything in the index can be rebuilt from the `.log`, so a missing or damaged index never loses data. When an index is loaded, only its longest consistent prefix is kept: positions must lie between the end of the header and the end of the log, and both offsets and positions must strictly increase. On recovery, the writer also checks that the last kept entries point to a real record carrying the expected offset, and rebuilds the rest by scanning the log. An entry can still be wrong yet look consistent (a damaged or stale index file): every read checks the entry it starts from, as described below. See [Crash recovery](./recovery.md).
 
 ## Finding an offset
 
 To read from offset `o`:
 
 1. **Pick the segment**: the last segment whose base offset is less than or equal to `o`. Segment names are base offsets, so this is a binary search on the sorted list.
-2. **Find a starting position**: a binary search in the segment's index gives the last entry whose offset is less than or equal to `o`. Without such an entry, start right after the 16-byte header.
+2. **Find a starting position**: a binary search in the segment's index gives the last entry whose offset is less than or equal to `o`. Without such an entry, start right after the 16-byte header. The record found at the entry's position must be the one the entry names; if it is not, the entry is wrong, and the read starts again from the previous entry, down to the start of the segment. The reader then forgets the wrong entries until the index file changes. A wrong index only slows reading down: it never makes a read fail or skip a record.
 3. **Scan forward**: read records with positional reads (`pread`) through a 64 KiB buffer, skip those below `o`, and collect records until the byte budget or the read limit is reached. Since entries are at most about 4 KiB apart, the scan is short.
 4. **Continue into the next segment** if the read limit lies beyond the current one.
 
