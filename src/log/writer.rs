@@ -22,8 +22,10 @@ use crate::segment::Segment;
 pub struct PartitionLog {
     dir: PathBuf,
     config: LogConfig,
-    /// Sorted by base offset; the last one is the active segment. Never empty.
-    segments: Vec<Segment>,
+    /// The segments before the active one, sorted by base offset.
+    sealed: Vec<Segment>,
+    /// The last segment, the only one that receives writes.
+    active: Segment,
 }
 
 impl PartitionLog {
@@ -36,36 +38,39 @@ impl PartitionLog {
         let dir = dir.as_ref().to_path_buf();
         fs::create_dir_all(&dir)?;
 
-        let bases = list_segment_bases(&dir)?;
-        let segments = if bases.is_empty() {
-            let first = Segment::create(&dir, 0, config.index_interval_bytes)?;
-            first.sync()?;
-            sync_dir(&dir)?;
-            vec![first]
-        } else {
-            let last = bases.len() - 1;
-            bases
-                .iter()
-                .enumerate()
-                .map(|(i, &base)| Segment::open(&dir, base, config.index_interval_bytes, i == last))
-                .collect::<Result<_>>()?
+        let interval = config.index_interval_bytes;
+        let (sealed, active) = match list_segment_bases(&dir)?.split_last() {
+            None => {
+                let first = Segment::create(&dir, 0, interval)?;
+                first.sync()?;
+                sync_dir(&dir)?;
+                (Vec::new(), first)
+            }
+            Some((&last, sealed)) => (
+                sealed
+                    .iter()
+                    .map(|&base| Segment::open(&dir, base, interval, false))
+                    .collect::<Result<_>>()?,
+                Segment::open(&dir, last, interval, true)?,
+            ),
         };
-        check_continuity(&dir, &segments)?;
-        // From the open segments, including a freshly created first segment.
-        let bases: Vec<u64> = segments.iter().map(Segment::base_offset).collect();
-        remove_orphan_indexes(&dir, &bases)?;
         let mut log = Self {
             dir,
             config,
-            segments,
+            sealed,
+            active,
         };
+        check_continuity(&log.dir, &log.all_segments())?;
+        // From the open segments, including a freshly created first segment.
+        let bases: Vec<u64> = log.all_segments().iter().map(|s| s.base_offset()).collect();
+        remove_orphan_indexes(&log.dir, &bases)?;
         log.enforce_retention()?;
         Ok(log)
     }
 
     /// First offset still available.
     pub fn start_offset(&self) -> u64 {
-        self.segments[0].base_offset()
+        self.sealed.first().unwrap_or(&self.active).base_offset()
     }
 
     /// Offset that the next appended message will receive.
@@ -96,13 +101,18 @@ impl PartitionLog {
         if shared.dirty || expected.active_base != self.active().base_offset() {
             return self.reload();
         }
+        // Retention never deletes the active segment: a start beyond it is a
+        // state the files do not match. Trust the disk, not the state.
+        if expected.start_offset > expected.active_base {
+            return self.reload();
+        }
         // Same active segment: its length must be the published one, or
         // something happened that the state does not describe.
         if self.active().file_len()? != expected.end_position {
             return self.reload();
         }
         // Segments deleted by another writer's retention.
-        self.segments
+        self.sealed
             .retain(|s| s.base_offset() >= expected.start_offset);
         if (self.active().size(), self.next_offset())
             != (expected.end_position, expected.next_offset)
@@ -184,11 +194,8 @@ impl PartitionLog {
         if retention.is_unlimited() {
             return Ok(0);
         }
-        let (active, sealed) = self
-            .segments
-            .split_last()
-            .expect("a log always has an active segment");
-        let sealed = sealed
+        let sealed = self
+            .sealed
             .iter()
             .map(|s| {
                 Ok(SealedSegment {
@@ -200,14 +207,19 @@ impl PartitionLog {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
-        let count =
-            retention::segments_to_delete(&sealed, active.size(), &retention, SystemTime::now());
+        let count = retention::segments_to_delete(
+            &sealed,
+            self.active.size(),
+            &retention,
+            SystemTime::now(),
+        );
         if count == 0 {
             return Ok(0);
         }
         // Oldest first: on failure, what remains is always
         // a continuous sequence of segments.
-        for segment in self.segments.drain(..count) {
+        // `count` is at most the number of sealed segments: the active one stays.
+        for segment in self.sealed.drain(..count.min(self.sealed.len())) {
             segment.delete()?;
         }
         sync_dir(&self.dir)?;
@@ -225,7 +237,8 @@ impl PartitionLog {
         if offset < start || offset > end {
             return Err(Error::OffsetOutOfRange { offset, start, end });
         }
-        let bases: Vec<u64> = self.segments.iter().map(Segment::base_offset).collect();
+        let segments = self.all_segments();
+        let bases: Vec<u64> = segments.iter().map(|s| s.base_offset()).collect();
         let mut out = Vec::new();
         let mut used = 0;
         read_across(
@@ -235,7 +248,7 @@ impl PartitionLog {
             max_bytes,
             &mut used,
             &mut out,
-            |i, req, out| self.segments[i].read(req, out),
+            |i, req, out| segments[i].read(req, out),
         )?;
         Ok(out)
     }
@@ -243,7 +256,8 @@ impl PartitionLog {
     fn exceeds_max_bytes(&self) -> bool {
         self.config.retention.max_bytes.is_some_and(|max| {
             // Only one segment: nothing to delete, the active segment stays.
-            self.segments.len() > 1 && self.segments.iter().map(Segment::size).sum::<u64>() > max
+            !self.sealed.is_empty()
+                && self.sealed.iter().map(Segment::size).sum::<u64>() + self.active.size() > max
         })
     }
 
@@ -253,15 +267,16 @@ impl PartitionLog {
     }
 
     fn active(&self) -> &Segment {
-        self.segments
-            .last()
-            .expect("a log always has an active segment")
+        &self.active
     }
 
     fn active_mut(&mut self) -> &mut Segment {
-        self.segments
-            .last_mut()
-            .expect("a log always has an active segment")
+        &mut self.active
+    }
+
+    /// All segments, sorted by base offset, the active one last.
+    fn all_segments(&self) -> Vec<&Segment> {
+        self.sealed.iter().chain([&self.active]).collect()
     }
 
     /// Must a new segment be opened before appending a record of `size` bytes?
@@ -292,7 +307,8 @@ impl PartitionLog {
         let segment = Segment::create(&self.dir, base, self.config.index_interval_bytes)?;
         segment.sync()?;
         sync_dir(&self.dir)?;
-        self.segments.push(segment);
+        let sealed = std::mem::replace(&mut self.active, segment);
+        self.sealed.push(sealed);
         Ok(())
     }
 }
@@ -306,9 +322,9 @@ struct PendingWrite {
 
 /// Each segment must end exactly where the next one begins:
 /// otherwise offsets are missing or overlap.
-fn check_continuity(dir: &Path, segments: &[Segment]) -> Result<()> {
+fn check_continuity(dir: &Path, segments: &[&Segment]) -> Result<()> {
     for pair in segments.windows(2) {
-        let (current, next) = (&pair[0], &pair[1]);
+        let (current, next) = (pair[0], pair[1]);
         if current.next_offset() != next.base_offset() {
             return Err(corrupt(
                 segment_log_path(dir, current.base_offset()),

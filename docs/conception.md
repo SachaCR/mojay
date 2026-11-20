@@ -80,7 +80,7 @@ Chaque partition est une suite de segments append-only. Chaque enregistrement po
 | `value_len` + `value` | `i32` + octets | -1 = valeur nulle (tombstone) |
 | `headers_count` | `u16` | Puis pour chaque header : `u16` + clé, `u32` + valeur |
 
-**Index** (`.idx`) : des paires `(offset relatif u32, position u32)`, une tous les 4 Kio écrits. Pour lire un offset, on fait une recherche binaire dans l'index, puis un court parcours du segment. L'index se reconstruit entièrement depuis le `.log` : il n'a pas besoin d'être durable.
+**Index** (`.idx`) : des paires `(offset relatif u32, position u32)`, une tous les 4 Kio écrits. Pour lire un offset, on fait une recherche binaire dans l'index, puis un court parcours du segment. L'index se reconstruit entièrement depuis le `.log` : il n'a pas besoin d'être durable. Une lecture vérifie que l'entrée choisie pointe bien sur l'enregistrement qu'elle nomme ; sinon (index abîmé ou périmé), elle repart de l'entrée précédente, jusqu'au début du segment. Un index faux ne fait donc que ralentir la lecture : il ne la fait jamais échouer et ne saute aucun enregistrement, sans attendre qu'un producteur le répare.
 
 **État des partitions** (`partitions.state`) : un fichier partagé en `mmap`, avec un emplacement de 64 octets par partition (des `u64` atomiques) :
 
@@ -101,7 +101,7 @@ Autant de producteurs que voulu, dans n'importe quels processus, peuvent écrire
 
 1. **Prise du verrou** : `flock(LOCK_EX)` bloquant, sur un fichier de verrou que le producteur garde ouvert. L'attente ne dure que le temps du lot d'un autre writer.
 2. **Rattrapage** : le producteur lit l'état de la partition dans `partitions.state`, publié par le writer précédent, et met sa vue à jour : nouvelle fin du segment actif, entrées d'index ajoutées, segments supprimés par la rétention. Cas normal : quelques comparaisons et un `fstat`.
-3. **Réouverture si besoin** : si un autre writer a ouvert un nouveau segment, si la longueur du fichier ne correspond pas à l'état publié, ou si `dirty` est resté levé (un writer est mort au milieu d'un changement), la partition est rouverte depuis le disque, avec la réparation habituelle de la fin.
+3. **Réouverture si besoin** : si un autre writer a ouvert un nouveau segment, si la longueur du fichier ne correspond pas à l'état publié, si le premier offset publié dépasse le segment actif (état incohérent : la rétention ne supprime jamais le segment actif), ou si `dirty` est resté levé (un writer est mort au milieu d'un changement), la partition est rouverte depuis le disque, avec la réparation habituelle de la fin.
 4. **Marquage** : `dirty` est levé avant de toucher au moindre fichier.
 5. **Ajout** : choix de la partition (imposée, sinon murmur2 sur la clé comme Kafka, sinon round-robin), écriture, index, rotation et rétention si besoin. Pas de `fsync` ici, sauf celui du segment scellé par une rotation.
 6. **Publication** : la fin du segment actif, sa base et le premier offset, puis `dirty` remis à zéro, puis `next_offset` en dernier.
@@ -129,7 +129,7 @@ L'ouverture d'un producteur répare chaque partition sous son verrou, comme avan
 - **Âge** : un segment scellé est supprimé quand sa dernière écriture date de plus de `max_age`. On utilise la date du fichier, pas les timestamps des messages, fournis par les producteurs et donc peu fiables. Vérifié à l'ouverture, à chaque nouveau segment, au plus une fois par seconde pendant les envois, et à la demande (`Producer::enforce_retention`).
 - **Jamais de trou** : on ne supprime que des segments scellés entiers, du plus ancien au plus récent, jamais le segment actif.
 - **Ordre de suppression** : le `.log` puis l'index. Un crash entre les deux laisse un index orphelin, nettoyé à l'ouverture suivante.
-- **Lecteurs** : un lecteur remarque une suppression en moins de 500 ms et relâche le fichier. Sans cela, son descripteur ouvert garderait l'espace disque occupé indéfiniment.
+- **Lecteurs** : un lecteur remarque une suppression en moins de 500 ms et relâche le fichier, dans toutes ses partitions, même celles qu'il ne lit pas, tant qu'on l'utilise : à chaque `TopicReader::read` et pendant chaque `Consumer::poll`, même sans rien à lire. Sans cela, son descripteur ouvert garderait l'espace disque occupé indéfiniment. Un lecteur ou un consumer qu'on n'appelle plus garde ses fichiers ouverts jusqu'au prochain appel ou jusqu'à sa fermeture.
 - **Limite** : la rétention n'est appliquée que lorsqu'un producteur est ouvert sur le topic.
 
 | Politique `fsync` | Quand | Survit à un crash du processus | Survit à une coupure de courant |

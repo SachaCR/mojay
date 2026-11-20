@@ -27,15 +27,21 @@ const MIN_BODY_SIZE: usize = 8 + 8 + 1 + 4 + 4 + 2;
 /// A message header: a text key and a binary value, as in Kafka.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Header {
+    /// The header name. Several headers may share it.
     pub key: String,
+    /// The header value, opaque bytes.
     pub value: Vec<u8>,
 }
 
 /// A message to produce. The offset is assigned by the log.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Message {
+    /// Chooses the partition (murmur2, like Kafka) when none is imposed.
+    /// `None` = no key: partitions are then used in turn.
     pub key: Option<Vec<u8>>,
+    /// The payload. `None` differs from an empty value, as in Kafka.
     pub value: Option<Vec<u8>>,
+    /// Headers, in order.
     pub headers: Vec<Header>,
     /// Milliseconds since the epoch. `None` = the local clock at append time.
     pub timestamp: Option<i64>,
@@ -59,6 +65,8 @@ impl Message {
         }
     }
 
+    /// Adds a header after the existing ones. The total size is checked
+    /// when the message is sent ([`Error::RecordTooLarge`](crate::Error::RecordTooLarge)).
     pub fn header(mut self, key: impl Into<String>, value: impl Into<Vec<u8>>) -> Self {
         self.headers.push(Header {
             key: key.into(),
@@ -67,6 +75,9 @@ impl Message {
         self
     }
 
+    /// Sets the timestamp, in milliseconds since the epoch, instead of the
+    /// local clock at append time. Mojay stores it as given and never
+    /// orders messages by it.
     pub fn timestamp(mut self, millis: i64) -> Self {
         self.timestamp = Some(millis);
         self
@@ -76,10 +87,16 @@ impl Message {
 /// A record read from the log.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Record {
+    /// Position of the record in its partition.
     pub offset: u64,
+    /// Milliseconds since the epoch: given by the producer, or the local
+    /// clock at append time.
     pub timestamp: i64,
+    /// The message key, as sent.
     pub key: Option<Vec<u8>>,
+    /// The message value, as sent.
     pub value: Option<Vec<u8>>,
+    /// The message headers, in order.
     pub headers: Vec<Header>,
 }
 

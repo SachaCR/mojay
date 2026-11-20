@@ -27,12 +27,20 @@ const RECORD_OVERHEAD: usize = 32;
 /// A message read by a consumer, with its origin.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConsumerRecord {
+    /// The topic the message was read from.
     pub topic: String,
+    /// Its partition in that topic.
     pub partition: u32,
+    /// Its offset in that partition.
     pub offset: u64,
+    /// Milliseconds since the epoch: given by the producer, or the local
+    /// clock at append time.
     pub timestamp: i64,
+    /// The message key, as sent.
     pub key: Option<Vec<u8>>,
+    /// The message value, as sent.
     pub value: Option<Vec<u8>>,
+    /// The message headers, in order.
     pub headers: Vec<Header>,
 }
 
@@ -64,9 +72,19 @@ impl ConsumerRecord {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RebalanceEvent {
     /// The consumer now owns this partition.
-    Assigned { topic: String, partition: u32 },
+    Assigned {
+        /// The topic of the partition.
+        topic: String,
+        /// The partition number in that topic.
+        partition: u32,
+    },
     /// The consumer handed this partition over to another group member.
-    Revoked { topic: String, partition: u32 },
+    Revoked {
+        /// The topic of the partition.
+        topic: String,
+        /// The partition number in that topic.
+        partition: u32,
+    },
 }
 
 /// A topic the consumer is subscribed to.
@@ -98,7 +116,7 @@ struct OwnedPartition {
 ///
 /// *At-least-once* delivery: after a crash, messages returned since the
 /// last commit are read again. A member that stops calling `poll` keeps its
-/// partitions for as long as it lives.
+/// partitions for as long as it lives (see [`poll`](Self::poll)).
 ///
 /// Members of the same group must subscribe to the same topics: otherwise the
 /// assignment stays correct (never two readers per partition), but is no
@@ -166,6 +184,7 @@ impl Consumer {
         Ok(consumer)
     }
 
+    /// The name of the group this consumer is a member of.
     pub fn group(&self) -> &str {
         &self.group
     }
@@ -198,6 +217,20 @@ impl Consumer {
     ///
     /// Returns an empty list if nothing arrived in time. The partitions of
     /// each `poll` are served in turn, so that none is starved.
+    ///
+    /// `poll` is also when this member takes part in the group: there is no
+    /// background thread. At most every 200 ms, while it runs, the member
+    /// gives up its surplus partitions to newcomers and takes free ones.
+    /// A member that stops calling `poll` keeps its partitions, and a new
+    /// member gets none of them until it polls again, closes or dies. Call
+    /// `poll` regularly, even with a short timeout, or drop the consumer
+    /// when it stops reading.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::Corrupt`] if a partition's data is unreadable.
+    /// - [`Error::Io`] on a file system error, including an automatic
+    ///   commit that fails.
     pub fn poll(&mut self, timeout: Duration) -> Result<Vec<ConsumerRecord>> {
         self.auto_commit_if_due()?;
         let deadline = Instant::now() + timeout;
@@ -205,6 +238,11 @@ impl Consumer {
         loop {
             if self.rebalance_is_due() {
                 self.rebalance()?;
+            }
+            // Even with nothing to read: an idle consumer must not keep
+            // segments deleted by retention open.
+            for topic in &mut self.topics {
+                topic.reader.release_deleted_segments()?;
             }
             let records = self.fetch()?;
             if !records.is_empty() {
@@ -421,5 +459,90 @@ impl Drop for Consumer {
             // since the last commit will be read again (at-least-once).
             let _ = self.commit();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Db, LogConfig, Message, Retention, TopicConfig};
+
+    /// Small segments whose sealed ones expire after `AGE`.
+    const AGE: Duration = Duration::from_millis(300);
+    const COUNT: u64 = 30;
+
+    /// A topic whose first partition holds `COUNT` messages over several
+    /// segments, all younger than `AGE`.
+    fn topic_with_segments(partitions: u32) -> (tempfile::TempDir, Db) {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db = Db::open(dir.path()).unwrap();
+        let log = LogConfig {
+            segment_max_bytes: 256,
+            retention: Retention {
+                max_bytes: None,
+                max_age: Some(AGE),
+            },
+            ..LogConfig::default()
+        };
+        db.create_topic("t", TopicConfig { partitions, log })
+            .unwrap();
+        let mut producer = db.producer("t").unwrap();
+        for i in 0..COUNT {
+            producer
+                .send_to(0, &Message::new("k", format!("value-{i}")))
+                .unwrap();
+        }
+        (dir, db)
+    }
+
+    /// Lets the sealed segments expire, then has a producer delete them
+    /// (opening it is enough: it applies retention).
+    fn expire_sealed_segments(db: &Db) {
+        thread::sleep(AGE + Duration::from_millis(100));
+        let mut producer = db.producer("t").unwrap();
+        producer.enforce_retention().unwrap();
+        assert!(db.reader("t").unwrap().start_offset(0).unwrap() > 0);
+    }
+
+    #[test]
+    fn idle_consumer_releases_segments_deleted_by_retention() {
+        let (_dir, db) = topic_with_segments(1);
+        let mut consumer = db.consumer("g", &["t"], ConsumerConfig::default()).unwrap();
+        let mut read = 0;
+        while read < COUNT {
+            read += consumer.poll(Duration::from_secs(1)).unwrap().len() as u64;
+        }
+        let reader = &consumer.topics[0].reader;
+        assert!(reader.open_segment_bases(0).len() > 1);
+
+        expire_sealed_segments(&db);
+        // Nothing new to read: the consumer stays at the read limit.
+        assert!(
+            consumer
+                .poll(Duration::from_millis(600))
+                .unwrap()
+                .is_empty()
+        );
+        let reader = &consumer.topics[0].reader;
+        assert_eq!(
+            reader.open_segment_bases(0),
+            vec![reader.start_offset(0).unwrap()],
+            "only the active segment is still open"
+        );
+    }
+
+    #[test]
+    fn reading_one_partition_releases_deleted_segments_of_the_others() {
+        let (_dir, db) = topic_with_segments(2);
+        let mut reader = db.reader("t").unwrap();
+        assert!(reader.open_segment_bases(0).len() > 1);
+
+        expire_sealed_segments(&db);
+        thread::sleep(Duration::from_millis(500));
+        assert!(reader.read(1, 0, usize::MAX).unwrap().is_empty());
+        assert_eq!(
+            reader.open_segment_bases(0),
+            vec![reader.start_offset(0).unwrap()]
+        );
     }
 }

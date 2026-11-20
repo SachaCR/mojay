@@ -8,7 +8,7 @@ use std::time::SystemTime;
 
 use super::{
     HEADER_SIZE, PosReader, READ_BUFFER_SIZE, ReadRequest, SegmentRead, check_header, header_bytes,
-    index_path, log_path, read_records,
+    index_path, log_path, read_indexed,
 };
 use crate::error::{Result, corrupt};
 use crate::index::{IndexEntry, IndexPolicy, SparseIndex};
@@ -196,12 +196,19 @@ impl Segment {
         Ok(())
     }
 
+    /// Reads the requested records. Opening only checked the last index
+    /// entries: a wrong entry before them is skipped on each read.
     pub(crate) fn read(&self, req: &ReadRequest, out: &mut Vec<Record>) -> Result<SegmentRead> {
-        let start = self
-            .index
-            .floor(self.base_offset, req.from)
-            .map_or(HEADER_SIZE, |e| e.position());
-        read_records(&self.log, &self.log_path, start, self.size, req, out)
+        let (read, _trusted) = read_indexed(
+            &self.log,
+            &self.log_path,
+            self.base_offset,
+            &self.index,
+            self.size,
+            req,
+            out,
+        )?;
+        Ok(read)
     }
 
     /// Checks the end of the segment, repairs it if active, and brings the index

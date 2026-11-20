@@ -43,6 +43,7 @@ pub struct LogConfig {
     pub segment_max_bytes: u64,
     /// Number of bytes written between two index entries.
     pub index_interval_bytes: u64,
+    /// When appended data is forced to disk.
     pub fsync: FsyncPolicy,
     /// Size and age limits of the partition. None by default.
     pub retention: Retention,

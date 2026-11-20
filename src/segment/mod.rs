@@ -19,6 +19,7 @@ pub(crate) use reader::SegmentReader;
 pub(crate) use writer::Segment;
 
 use crate::error::{Result, corrupt};
+use crate::index::SparseIndex;
 use crate::record::{self, ReadOutcome, Record};
 
 pub(crate) const HEADER_SIZE: u64 = 16;
@@ -56,24 +57,86 @@ pub(crate) enum SegmentRead {
     BudgetReached,
 }
 
-/// Reads the records requested by `req`, starting at position `start`
-/// and without going past `size` bytes of the file.
+/// Where a read starts in the `.log`.
+#[derive(Debug, Clone, Copy)]
+enum ReadStart {
+    /// Right after the header, at the first record of the segment.
+    SegmentStart,
+    /// The position given by an index entry, which must hold the record at `offset`.
+    Indexed { position: u64, offset: u64 },
+}
+
+/// Reads the records requested by `req`, starting from the closest entry of
+/// `index` at or before `req.from`. `size` is the number of readable bytes
+/// of the `.log`.
+///
+/// The index is a cache and may be wrong: an entry whose position does not
+/// hold the record it names (damaged or stale index file) is skipped for the
+/// previous one, down to the start of the segment. A wrong index thus only
+/// slows reading down, it never makes it fail or skip records.
+///
+/// Also returns how many leading entries of `index` can still be trusted:
+/// all of them, or those before the first wrong entry found.
+fn read_indexed(
+    log: &File,
+    path: &Path,
+    base_offset: u64,
+    index: &SparseIndex,
+    size: u64,
+    req: &ReadRequest,
+    out: &mut Vec<Record>,
+) -> Result<(SegmentRead, usize)> {
+    let mut trusted = index.len();
+    let mut candidate = index.floor_index(base_offset, req.from);
+    loop {
+        let start = match candidate {
+            Some(i) => {
+                let entry = index.entries()[i];
+                ReadStart::Indexed {
+                    position: entry.position(),
+                    offset: entry.offset(base_offset),
+                }
+            }
+            None => ReadStart::SegmentStart,
+        };
+        if let Some(read) = read_records(log, path, start, size, req, out)? {
+            return Ok((read, trusted));
+        }
+        // Step back one entry. A read from the segment start checks no
+        // entry and is never rejected: this error cannot actually occur.
+        let Some(wrong) = candidate else {
+            return Err(corrupt(path, "read from the segment start rejected"));
+        };
+        trusted = wrong;
+        candidate = wrong.checked_sub(1);
+    }
+}
+
+/// Reads the records requested by `req` from `start`, without going past
+/// `size` bytes of the file.
+///
+/// Returns `None`, having read nothing, if `start` comes from an index entry
+/// and the record found there is not the one the entry names.
 ///
 /// Beyond `req.end`, another process may be writing: an
 /// unreadable record there is not an error. Before it, it is one.
 fn read_records(
     log: &File,
     path: &Path,
-    start: u64,
+    start: ReadStart,
     size: u64,
     req: &ReadRequest,
     out: &mut Vec<Record>,
-) -> Result<SegmentRead> {
+) -> Result<Option<SegmentRead>> {
+    let (position, mut expected_first) = match start {
+        ReadStart::SegmentStart => (HEADER_SIZE, None),
+        ReadStart::Indexed { position, offset } => (position, Some(offset)),
+    };
     let mut reader = BufReader::with_capacity(
         READ_BUFFER_SIZE,
         PosReader {
             file: log,
-            pos: start,
+            pos: position,
             end: size,
         },
     );
@@ -81,26 +144,34 @@ fn read_records(
     let mut first = req.take_one;
     let mut next_offset: Option<u64> = None;
     loop {
-        match record::read_record(&mut reader)? {
+        let outcome = record::read_record(&mut reader)?;
+        if let Some(expected) = expected_first.take() {
+            // The entry names a record before the read limit, so a complete
+            // record must be there: anything else means a wrong entry.
+            if !matches!(&outcome, ReadOutcome::Record(rec, _) if rec.offset == expected) {
+                return Ok(None);
+            }
+        }
+        match outcome {
             ReadOutcome::Record(rec, size) => {
                 next_offset = Some(rec.offset + 1);
                 if rec.offset < req.from {
                     continue;
                 }
                 if rec.offset >= req.end {
-                    return Ok(SegmentRead::Exhausted { taken });
+                    return Ok(Some(SegmentRead::Exhausted { taken }));
                 }
                 if !first && taken + size > req.budget {
-                    return Ok(SegmentRead::BudgetReached);
+                    return Ok(Some(SegmentRead::BudgetReached));
                 }
                 first = false;
                 taken += size;
                 out.push(rec);
             }
-            ReadOutcome::End => return Ok(SegmentRead::Exhausted { taken }),
+            ReadOutcome::End => return Ok(Some(SegmentRead::Exhausted { taken })),
             ReadOutcome::Incomplete | ReadOutcome::Corrupt(_) => {
                 if next_offset.is_some_and(|next| next >= req.end) {
-                    return Ok(SegmentRead::Exhausted { taken });
+                    return Ok(Some(SegmentRead::Exhausted { taken }));
                 }
                 return Err(corrupt(path, "unreadable record before the read limit"));
             }

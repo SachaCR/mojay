@@ -19,6 +19,9 @@
 //! # Ok::<(), mojay::Error>(())
 //! ```
 
+// AGENT.md: every public item is documented.
+#![warn(missing_docs)]
+
 #[cfg(not(unix))]
 compile_error!("Mojay only targets macOS and Linux in V1.");
 

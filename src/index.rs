@@ -93,13 +93,18 @@ impl SparseIndex {
         self.entries.extend(entries);
     }
 
-    /// The last entry whose offset is less than or equal to `offset`.
-    pub(crate) fn floor(&self, base_offset: u64, offset: u64) -> Option<IndexEntry> {
+    /// Forgets the entries from position `len` on.
+    pub(crate) fn truncate(&mut self, len: usize) {
+        self.entries.truncate(len);
+    }
+
+    /// The position in [`entries`](Self::entries) of the last entry whose
+    /// offset is less than or equal to `offset`.
+    pub(crate) fn floor_index(&self, base_offset: u64, offset: u64) -> Option<usize> {
         let relative = offset.saturating_sub(base_offset);
-        let idx = self
-            .entries
-            .partition_point(|e| u64::from(e.relative_offset) <= relative);
-        idx.checked_sub(1).map(|i| self.entries[i])
+        self.entries
+            .partition_point(|e| u64::from(e.relative_offset) <= relative)
+            .checked_sub(1)
     }
 }
 
@@ -193,10 +198,10 @@ mod tests {
     fn floor_finds_the_closest_entry_below() {
         let raw = SparseIndex::encode(&[entry(10, 100), entry(20, 200)]);
         let index = SparseIndex::parse(&raw, 16, 1000).index;
-        assert_eq!(index.floor(1000, 1005), None);
-        assert_eq!(index.floor(1000, 1010), Some(entry(10, 100)));
-        assert_eq!(index.floor(1000, 1019), Some(entry(10, 100)));
-        assert_eq!(index.floor(1000, 1500), Some(entry(20, 200)));
+        assert_eq!(index.floor_index(1000, 1005), None);
+        assert_eq!(index.floor_index(1000, 1010), Some(0));
+        assert_eq!(index.floor_index(1000, 1019), Some(0));
+        assert_eq!(index.floor_index(1000, 1500), Some(1));
     }
 
     #[test]

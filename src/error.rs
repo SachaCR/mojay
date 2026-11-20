@@ -4,40 +4,78 @@ use std::path::PathBuf;
 /// Errors returned by Mojay.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// A file system operation failed.
     #[error("I/O error: {0}")]
     Io(#[from] io::Error),
 
     /// Invalid on-disk data that cannot be repaired
     /// automatically (unreadable segment header, damaged sealed segment...).
     #[error("corrupt data in {path}: {reason}")]
-    Corrupt { path: PathBuf, reason: String },
+    Corrupt {
+        /// The damaged file.
+        path: PathBuf,
+        /// What is wrong with it.
+        reason: String,
+    },
 
     /// The requested offset does not exist (yet, or any more) in the partition.
     #[error("offset {offset} out of range (available: {start}..{end})")]
-    OffsetOutOfRange { offset: u64, start: u64, end: u64 },
+    OffsetOutOfRange {
+        /// The requested offset.
+        offset: u64,
+        /// First available offset.
+        start: u64,
+        /// Last offset that can be requested: reading there returns nothing yet.
+        end: u64,
+    },
 
+    /// A message whose encoded size exceeds
+    /// [`MAX_RECORD_SIZE`](crate::MAX_RECORD_SIZE). Nothing was written.
     #[error("record too large: {size} bytes (maximum {max})")]
-    RecordTooLarge { size: usize, max: usize },
+    RecordTooLarge {
+        /// Encoded size of the message.
+        size: usize,
+        /// The maximum allowed.
+        max: usize,
+    },
 
+    /// A message that cannot be encoded (a header name too long, for example).
+    /// Nothing was written.
     #[error("invalid record: {0}")]
     InvalidRecord(String),
 
+    /// An invalid configuration or argument, with the reason.
     #[error("invalid configuration: {0}")]
     InvalidConfig(String),
 
+    /// A topic with this name already exists.
     #[error("topic \"{0}\" already exists")]
     TopicExists(String),
 
+    /// No topic has this name.
     #[error("topic \"{0}\" does not exist")]
     UnknownTopic(String),
 
+    /// A topic or group name that cannot be used as a directory name.
     #[error("invalid name \"{name}\": {reason}")]
-    InvalidName { name: String, reason: String },
+    InvalidName {
+        /// The rejected name.
+        name: String,
+        /// Why it is rejected.
+        reason: String,
+    },
 
+    /// A partition number beyond those of the topic.
     #[error("partition {partition} does not exist (the topic has {partitions})")]
-    UnknownPartition { partition: u32, partitions: u32 },
+    UnknownPartition {
+        /// The requested partition.
+        partition: u32,
+        /// The number of partitions of the topic: valid ones are `0..partitions`.
+        partitions: u32,
+    },
 }
 
+/// The result type of Mojay operations.
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// Shorthand to build an [`Error::Corrupt`].

@@ -544,6 +544,80 @@ fn retention_by_one_writer_is_seen_by_the_others() {
     assert_eq!(read.len() as u64, 200 - start);
 }
 
+/// A shared state whose start offset lies beyond the active segment (a
+/// damaged `partitions.state`) does not take the active segment away from
+/// the next writer: it reopens the partition from disk instead.
+#[test]
+fn start_offset_beyond_the_active_segment_is_not_trusted() {
+    /// Byte position of partition 0's `start_offset` in `partitions.state`.
+    const START_OFFSET_POSITION: u64 = 3 * 8;
+    let (dir, db) = new_db();
+    db.create_topic("t", config(1, 1 << 20, FsyncPolicy::Always))
+        .unwrap();
+    let mut producer = db.producer("t").unwrap();
+    producer.send_to(0, &message(0)).unwrap();
+
+    let state = OpenOptions::new()
+        .write(true)
+        .open(dir.path().join("topics/t/partitions.state"))
+        .unwrap();
+    state
+        .write_all_at(&1000u64.to_ne_bytes(), START_OFFSET_POSITION)
+        .unwrap();
+
+    assert_eq!(producer.send_to(0, &message(1)).unwrap(), 1);
+    let mut reader = db.reader("t").unwrap();
+    assert_eq!(reader.start_offset(0).unwrap(), 0);
+    let records = reader.read(0, 0, ALL).unwrap();
+    assert_eq!(records.len(), 2);
+    assert_is_message(&records[1], 1);
+}
+
+/// A reader never repairs anything: an index entry that names a record but
+/// points anywhere else, at each position of the segment, is skipped and
+/// every record is still returned, none skipped.
+#[test]
+fn reader_skips_a_wrong_index_entry_at_each_position() {
+    const COUNT: u64 = 12;
+    const NAMED: u32 = 6;
+    let (dir, db) = new_db();
+    db.create_topic("t", config(1, 1 << 20, FsyncPolicy::Always))
+        .unwrap();
+    let partition = dir.path().join("topics/t/p0");
+    let log_len = || {
+        fs::metadata(partition.join("00000000000000000000.log"))
+            .unwrap()
+            .len()
+    };
+    let mut producer = db.producer("t").unwrap();
+    let start = log_len();
+    for i in 0..COUNT {
+        producer.send_to(0, &message(i)).unwrap();
+    }
+    let end = log_len();
+
+    for position in start..end {
+        let mut index = NAMED.to_le_bytes().to_vec();
+        index.extend_from_slice(&u32::try_from(position).unwrap().to_le_bytes());
+        fs::write(partition.join("00000000000000000000.idx"), &index).unwrap();
+
+        // A fresh reader, to load this index; each offset is read twice, the
+        // second time once the reader has dropped the wrong entry.
+        let mut reader = db.reader("t").unwrap();
+        for from in u64::from(NAMED)..COUNT {
+            for _ in 0..2 {
+                let records = reader
+                    .read(0, from, ALL)
+                    .unwrap_or_else(|e| panic!("entry at {position}, read from {from}: {e}"));
+                assert_eq!(records.len() as u64, COUNT - from, "entry at {position}");
+                for (rec, i) in records.iter().zip(from..) {
+                    assert_is_message(rec, i);
+                }
+            }
+        }
+    }
+}
+
 /// A reader follows a writer in another process, segment by segment, and
 /// never sees an incomplete message.
 #[test]

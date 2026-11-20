@@ -35,21 +35,33 @@ impl TopicReader {
         })
     }
 
+    /// The name of the topic this reader reads.
     pub fn topic(&self) -> &str {
         &self.topic
     }
 
+    /// The number of partitions of the topic, fixed at its creation: valid
+    /// partitions are `0..partitions()`.
     pub fn partitions(&self) -> u32 {
         self.partitions.len() as u32
     }
 
-    /// First available offset in `partition`.
+    /// First available offset in `partition`: retention may have deleted
+    /// the ones before it.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::UnknownPartition`] if the topic has no such partition.
     pub fn start_offset(&self, partition: u32) -> Result<u64> {
         Ok(self.partition(partition)?.start_offset())
     }
 
     /// First offset not yet readable in `partition`: you can read
     /// `start_offset..read_limit`.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::UnknownPartition`] if the topic has no such partition.
     pub fn read_limit(&self, partition: u32) -> Result<u64> {
         self.states.read_limit(partition)
     }
@@ -59,7 +71,20 @@ impl TopicReader {
     /// at least one message if there is a readable one, even if larger than `max_bytes`.
     ///
     /// Reading at the read limit returns an empty list: nothing new yet.
+    ///
+    /// Each call also releases, in every partition, the segments that
+    /// retention deleted more than 500 ms ago. A reader that is no longer
+    /// called keeps their files open, and their disk space taken, until it
+    /// is called again or dropped.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::UnknownPartition`] if the topic has no such partition.
+    /// - [`Error::OffsetOutOfRange`] outside `start_offset..=read_limit`.
+    /// - [`Error::Corrupt`] if a record before the read limit is unreadable.
+    /// - [`Error::Io`] on a file system error.
     pub fn read(&mut self, partition: u32, offset: u64, max_bytes: usize) -> Result<Vec<Record>> {
+        self.release_deleted_segments()?;
         let read_limit = self.states.read_limit(partition)?;
         let partitions = self.partitions();
         self.partitions
@@ -69,6 +94,22 @@ impl TopicReader {
                 partitions,
             })?
             .read(offset, max_bytes, read_limit)
+    }
+
+    /// Closes the files of the segments that retention deleted, in every
+    /// partition last checked more than 500 ms ago: an open file keeps its
+    /// disk space taken. Covers the partitions that are never read too.
+    pub(crate) fn release_deleted_segments(&mut self) -> Result<()> {
+        for partition in &mut self.partitions {
+            partition.sync_with_disk_if_due()?;
+        }
+        Ok(())
+    }
+
+    /// Base offsets of the segments this reader has open in `partition`.
+    #[cfg(test)]
+    pub(crate) fn open_segment_bases(&self, partition: u32) -> Vec<u64> {
+        self.partitions[partition as usize].open_segment_bases()
     }
 
     fn partition(&self, partition: u32) -> Result<&PartitionReader> {
