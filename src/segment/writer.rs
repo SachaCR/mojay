@@ -113,6 +113,36 @@ impl Segment {
         self.size == HEADER_SIZE
     }
 
+    /// Current length of the `.log` file on disk.
+    pub(crate) fn file_len(&self) -> Result<u64> {
+        Ok(self.log.metadata()?.len())
+    }
+
+    /// Catches up with records that other writers appended to this active
+    /// segment: its valid end and next offset come from the shared partition
+    /// state (published by the last lock holder), and the index entries they
+    /// added are reloaded from the index file.
+    ///
+    /// Must be called under the partition's write lock, after checking that
+    /// the file length matches `end_position`.
+    pub(crate) fn catch_up(&mut self, end_position: u64, next_offset: u64) -> Result<()> {
+        self.size = end_position;
+        self.next_offset = next_offset;
+
+        let len = self.index_file.metadata()?.len();
+        let mut raw = vec![0u8; usize::try_from(len).unwrap_or(0)];
+        self.index_file.read_exact_at(&mut raw, 0)?;
+        let parsed = SparseIndex::parse(&raw, HEADER_SIZE, end_position);
+        self.index = parsed.index;
+        if !parsed.clean {
+            // Entries past the valid end: drop them so new ones follow the last valid one.
+            self.write_index_file()?;
+        }
+        let last_entry = self.index.last().map_or(HEADER_SIZE, |e| e.position());
+        self.index_policy.resume(end_position - last_entry);
+        Ok(())
+    }
+
     /// Appends already-encoded records, one after another.
     /// `sizes` gives the size of each one, in order; their offsets
     /// start at `next_offset`.
@@ -153,14 +183,10 @@ impl Segment {
     /// Deletes the segment from disk: the `.log` first, then the index. A
     /// crash between the two leaves an orphan index, ignored then cleaned up on
     /// the next open; never a log without its beginning.
+    /// Already deleted files (by another writer) are not an error.
     pub(crate) fn delete(self) -> Result<()> {
-        let index_path = self.log_path.with_extension("idx");
-        fs::remove_file(&self.log_path)?;
-        match fs::remove_file(&index_path) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(e.into()),
-        }
+        remove_if_present(&self.log_path)?;
+        remove_if_present(&self.log_path.with_extension("idx"))
     }
 
     /// Forces the log and the index to disk.
@@ -292,6 +318,14 @@ impl Segment {
         self.index_file
             .write_all_at(&SparseIndex::encode(self.index.entries()), 0)?;
         Ok(())
+    }
+}
+
+fn remove_if_present(path: &Path) -> Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.into()),
     }
 }
 

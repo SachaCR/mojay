@@ -74,8 +74,9 @@ impl Db {
         Ok(names)
     }
 
-    /// Opens a topic's writer. Returns [`Error::Busy`] if another
-    /// producer, in this process or another one, is already open.
+    /// Opens a writer on a topic. Any number of producers, in this process
+    /// or others, can write to the same topic: they take turns on each
+    /// partition, one batch at a time.
     pub fn producer(&self, topic: &str) -> Result<Producer> {
         Producer::open(&self.existing_topic_dir(topic)?, topic)
     }

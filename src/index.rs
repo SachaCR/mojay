@@ -125,6 +125,12 @@ impl IndexPolicy {
         self.bytes_since_entry = 0;
     }
 
+    /// Resumes after records written by someone else: `bytes` were written
+    /// since the last index entry.
+    pub(crate) fn resume(&mut self, bytes: u64) {
+        self.bytes_since_entry = bytes;
+    }
+
     /// Accounts for a record of `size` bytes written at `position`,
     /// and returns the index entry that must point to it, if one is needed.
     pub(crate) fn observe(

@@ -67,6 +67,54 @@ impl FileLock {
     }
 }
 
+/// A lock file kept open, locked and unlocked many times: one partition's
+/// write lock, taken for each batch of messages.
+///
+/// Each value opens its own file description, so two values exclude each
+/// other even within one process.
+#[derive(Debug)]
+pub(crate) struct WriteLock {
+    file: File,
+}
+
+/// The lock is held for as long as the guard lives.
+#[derive(Debug)]
+pub(crate) struct WriteGuard<'a> {
+    file: &'a File,
+}
+
+impl WriteLock {
+    /// Opens (and creates if needed) the lock file at `path`, without locking it.
+    pub(crate) fn open(path: &Path) -> Result<Self> {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path)?;
+        Ok(Self { file })
+    }
+
+    /// Waits until the lock is free, then takes it.
+    pub(crate) fn acquire(&self) -> Result<WriteGuard<'_>> {
+        loop {
+            match flock(&self.file, FlockOperation::LockExclusive) {
+                Ok(()) => return Ok(WriteGuard { file: &self.file }),
+                // Interrupted by a signal: wait again.
+                Err(Errno::INTR) => {}
+                Err(errno) => return Err(io::Error::from(errno).into()),
+            }
+        }
+    }
+}
+
+impl Drop for WriteGuard<'_> {
+    /// Unlocks explicitly, for the same reason as [`FileLock`].
+    fn drop(&mut self) {
+        let _ = flock(self.file, FlockOperation::Unlock);
+    }
+}
+
 impl Drop for FileLock {
     /// Explicitly unlocks before closing the file.
     ///
@@ -93,6 +141,24 @@ mod tests {
         assert!(first.is_some());
         assert!(FileLock::try_exclusive(&path).unwrap().is_none());
         drop(first);
+        assert!(FileLock::try_exclusive(&path).unwrap().is_some());
+    }
+
+    #[test]
+    fn write_lock_excludes_other_holders_until_the_guard_is_dropped() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("write.lock");
+        let first = WriteLock::open(&path).unwrap();
+        let second = WriteLock::open(&path).unwrap();
+
+        let guard = first.acquire().unwrap();
+        assert!(FileLock::try_exclusive(&path).unwrap().is_none());
+        drop(guard);
+        let guard = second.acquire().unwrap();
+        assert!(FileLock::try_exclusive(&path).unwrap().is_none());
+        drop(guard);
+        // Locked and unlocked again: the same lock file is reusable.
+        drop(first.acquire().unwrap());
         assert!(FileLock::try_exclusive(&path).unwrap().is_some());
     }
 

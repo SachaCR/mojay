@@ -2,10 +2,10 @@
 
 use std::path::Path;
 
-use super::{READ_LIMITS_FILE, load_config, partition_dir};
+use super::{STATE_FILE, load_config, partition_dir};
 use crate::error::{Error, Result};
 use crate::log::PartitionReader;
-use crate::read_limits::ReadLimits;
+use crate::partition_state::PartitionStates;
 use crate::record::Record;
 
 /// A reader of a topic. It takes no lock and modifies nothing:
@@ -18,7 +18,7 @@ use crate::record::Record;
 pub struct TopicReader {
     topic: String,
     partitions: Vec<PartitionReader>,
-    read_limits: ReadLimits,
+    states: PartitionStates,
 }
 
 impl TopicReader {
@@ -27,11 +27,11 @@ impl TopicReader {
         let partitions = (0..config.partitions)
             .map(|p| PartitionReader::open(&partition_dir(topic_dir, p)))
             .collect::<Result<_>>()?;
-        let read_limits = ReadLimits::open(&topic_dir.join(READ_LIMITS_FILE), config.partitions)?;
+        let states = PartitionStates::open(&topic_dir.join(STATE_FILE), config.partitions)?;
         Ok(Self {
             topic: topic.to_string(),
             partitions,
-            read_limits,
+            states,
         })
     }
 
@@ -51,7 +51,7 @@ impl TopicReader {
     /// First offset not yet readable in `partition`: you can read
     /// `start_offset..read_limit`.
     pub fn read_limit(&self, partition: u32) -> Result<u64> {
-        self.read_limits.get(partition)
+        self.states.read_limit(partition)
     }
 
     /// Reads messages from `partition` starting at `offset`, without exceeding
@@ -60,7 +60,7 @@ impl TopicReader {
     ///
     /// Reading at the read limit returns an empty list: nothing new yet.
     pub fn read(&mut self, partition: u32, offset: u64, max_bytes: usize) -> Result<Vec<Record>> {
-        let read_limit = self.read_limits.get(partition)?;
+        let read_limit = self.states.read_limit(partition)?;
         let partitions = self.partitions();
         self.partitions
             .get_mut(partition as usize)

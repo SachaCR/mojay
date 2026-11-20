@@ -13,6 +13,7 @@ use super::{
 };
 use crate::durable::sync_dir;
 use crate::error::{Error, Result, corrupt};
+use crate::partition_state::{SharedState, WriterState};
 use crate::record::{self, Message, Record};
 use crate::segment::Segment;
 
@@ -70,6 +71,52 @@ impl PartitionLog {
     /// Offset that the next appended message will receive.
     pub fn next_offset(&self) -> u64 {
         self.active().next_offset()
+    }
+
+    /// What to publish in the shared partition state after a change, for the
+    /// other writers and for readers.
+    pub(crate) fn writer_state(&self) -> WriterState {
+        WriterState {
+            read_limit: self.next_offset(),
+            end_position: self.active().size(),
+            active_base: self.active().base_offset(),
+            start_offset: self.start_offset(),
+        }
+    }
+
+    /// Brings this view of the partition up to date with what other writers
+    /// did since our last change, as described by `shared`.
+    ///
+    /// Must be called under the partition's write lock, with the state read
+    /// there. Usually a few comparisons and one `fstat`; the partition is
+    /// reopened from disk (with the usual tail repair) when another writer
+    /// started a new segment, or died in the middle of a change.
+    pub(crate) fn catch_up(&mut self, shared: &SharedState) -> Result<()> {
+        let expected = shared.state;
+        if shared.dirty || expected.active_base != self.active().base_offset() {
+            return self.reload();
+        }
+        // Same active segment: its length must be the published one, or
+        // something happened that the state does not describe.
+        if self.active().file_len()? != expected.end_position {
+            return self.reload();
+        }
+        // Segments deleted by another writer's retention.
+        self.segments
+            .retain(|s| s.base_offset() >= expected.start_offset);
+        if (self.active().size(), self.next_offset())
+            != (expected.end_position, expected.read_limit)
+        {
+            self.active_mut()
+                .catch_up(expected.end_position, expected.read_limit)?;
+        }
+        Ok(())
+    }
+
+    /// Reopens the partition from disk, repairing an interrupted write.
+    fn reload(&mut self) -> Result<()> {
+        *self = Self::open(&self.dir, self.config.clone())?;
+        Ok(())
     }
 
     /// Appends a message and returns its offset.

@@ -1,15 +1,16 @@
-//! Topics: one directory per topic, with its partitions, its metadata,
-//! its writer lock and its read limits.
+//! Topics: one directory per topic, with its partitions, its metadata and
+//! the state its writers and readers share.
 //!
 //! ```text
 //! topics/<topic>/
-//!   meta.toml      # number of partitions and log configuration
-//!   writer.lock    # exclusive flock = the topic's writer
-//!   read_limits    # one read limit per partition, shared via mmap
-//!   p0/ p1/ ...    # one PartitionLog per partition
+//!   meta.toml          # number of partitions and log configuration
+//!   partitions.state   # per partition: read limit and writer state, shared via mmap
+//!   p0/ p1/ ...        # one PartitionLog per partition
+//!     write.lock       # flock taken by a writer for each batch of messages
 //! ```
 //!
-//! - [`Producer`]: the writer, unique per topic thanks to the lock.
+//! - [`Producer`]: a writer. Any number of them, in any process: they take
+//!   turns on each partition through its write lock.
 //! - [`TopicReader`]: a reader, lock-free, as many as you like.
 
 mod background_sync;
@@ -31,12 +32,13 @@ use crate::durable::{sync_dir, write_atomic};
 use crate::error::{Error, Result, corrupt};
 use crate::log::{FsyncPolicy, LogConfig, Retention};
 use crate::meta::{self, Meta, Value};
-use crate::read_limits;
+use crate::partition_state;
 
 const META_FILE: &str = "meta.toml";
-const WRITER_LOCK_FILE: &str = "writer.lock";
-const READ_LIMITS_FILE: &str = "read_limits";
-const META_FORMAT_VERSION: u64 = 1;
+const STATE_FILE: &str = "partitions.state";
+const WRITE_LOCK_FILE: &str = "write.lock";
+/// Version 2: several writers per topic, `partitions.state` instead of `read_limits`.
+const META_FORMAT_VERSION: u64 = 2;
 const MAX_PARTITIONS: u32 = 10_000;
 /// Same as Kafka: beyond this, some file systems reject the name.
 const MAX_NAME_LEN: usize = 249;
@@ -132,7 +134,7 @@ pub(crate) fn create(topics_dir: &Path, name: &str, config: &TopicConfig) -> Res
 fn prepare(dir: &Path, config: &TopicConfig) -> Result<()> {
     fs::create_dir(dir)?;
     write_atomic(&dir.join(META_FILE), encode_config(config).as_bytes())?;
-    read_limits::create(&dir.join(READ_LIMITS_FILE), config.partitions)?;
+    partition_state::create(&dir.join(STATE_FILE), config.partitions)?;
     for partition in 0..config.partitions {
         fs::create_dir(partition_dir(dir, partition))?;
     }
@@ -187,6 +189,13 @@ fn load_config(topic_dir: &Path) -> Result<TopicConfig> {
         "retention_ms",
     ])?;
     let version = meta.int("format_version")?;
+    if version == 1 {
+        // No migration: the project is young, and a v1 topic only allows one writer.
+        return Err(corrupt(
+            &path,
+            "topic created by an older Mojay (format version 1, single writer): recreate it",
+        ));
+    }
     if version != META_FORMAT_VERSION {
         return Err(corrupt(
             &path,

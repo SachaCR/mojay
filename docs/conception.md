@@ -46,9 +46,9 @@ data/
   mojay.toml                       # version du format, options globales
   topics/<topic>/
     meta.toml                      # nombre de partitions, rétention, politique fsync
-    writer.lock                    # flock exclusif = le writer du topic
-    read_limits                    # limites de lecture, partagées en mmap
+    partitions.state               # état partagé de chaque partition, en mmap
     p0/
+      write.lock                   # flock pris par un writer pour chaque lot
       00000000000000000000.log     # segment, nommé par son premier offset
       00000000000000000000.idx     # index clairsemé offset -> position
     p1/ ...
@@ -81,17 +81,35 @@ Chaque partition est une suite de segments append-only. Chaque enregistrement po
 
 **Index** (`.idx`) : des paires `(offset relatif u32, position u32)`, une tous les 4 Kio écrits. Pour lire un offset, on fait une recherche binaire dans l'index, puis un court parcours du segment. L'index se reconstruit entièrement depuis le `.log` : il n'a pas besoin d'être durable.
 
-**Limites de lecture** (`read_limits`) : un fichier partagé en `mmap`, avec un `u64` aligné par partition. Le writer les publie avec une écriture atomique *Release* après chaque ajout. Les lecteurs les lisent avec une lecture atomique *Acquire*, sans appel système.
+**État des partitions** (`partitions.state`) : un fichier partagé en `mmap`, avec un emplacement de 64 octets par partition (des `u64` atomiques) :
 
-## Writer unique par topic
+| Champ | Rôle |
+| --- | --- |
+| `read_limit` | La limite de lecture. Publiée en dernier, avec *Release* ; les lecteurs la lisent avec *Acquire*, sans appel système. |
+| `end_position` | Nombre d'octets valides du segment actif. |
+| `active_base` | Base du segment actif. |
+| `start_offset` | Premier offset disponible. |
+| `dirty` | Non nul pendant qu'un writer modifie les fichiers de la partition. |
 
-Un seul processus écrit dans un topic à la fois : celui qui tient le verrou `flock` exclusif sur `writer.lock`. Si ce processus crashe, l'OS libère le verrou, et le writer suivant répare la fin du log avant d'écrire.
+Les lecteurs n'utilisent que `read_limit`. Les writers lisent et publient le reste, toujours sous le verrou d'écriture de la partition.
 
-1. **Prise du verrou** : `flock(LOCK_EX | LOCK_NB)`. En cas d'échec, on renvoie `Error::Busy`, ou on attend si l'appelant a fourni un délai.
-2. **Récupération** : pour chaque partition, on relit le dernier segment depuis la dernière entrée d'index et on valide longueur et CRC. On tronque tout ce qui suit le dernier enregistrement valide, puis on recalcule l'index et la limite de lecture.
-3. **Choix de la partition** : imposée par l'appelant, sinon hash de la clé (murmur2, comme Kafka), sinon round-robin quand il n'y a pas de clé.
-4. **Ajout** : on écrit l'enregistrement, on met à jour l'index si besoin, on applique la politique de `fsync`, puis on publie la nouvelle limite de lecture.
-5. **Rotation et rétention** : on ouvre un nouveau segment au-delà de la taille maximale. Le writer supprime les segments scellés les plus anciens qui dépassent la rétention ; le premier offset disponible est simplement la base du premier segment restant.
+## Plusieurs writers : un verrou d'écriture par partition
+
+Autant de producteurs que voulu, dans n'importe quels processus, peuvent écrire dans le même topic et la même partition, comme plusieurs producteurs Kafka. Ils écrivent chacun leur tour, à la manière de SQLite : un verrou `flock` par partition (`p<N>/write.lock`), pris pour un seul lot de messages.
+
+1. **Prise du verrou** : `flock(LOCK_EX)` bloquant, sur un fichier de verrou que le producteur garde ouvert. L'attente ne dure que le temps du lot d'un autre writer.
+2. **Rattrapage** : le producteur lit l'état de la partition dans `partitions.state`, publié par le writer précédent, et met sa vue à jour : nouvelle fin du segment actif, entrées d'index ajoutées, segments supprimés par la rétention. Cas normal : quelques comparaisons et un `fstat`.
+3. **Réouverture si besoin** : si un autre writer a ouvert un nouveau segment, si la longueur du fichier ne correspond pas à l'état publié, ou si `dirty` est resté levé (un writer est mort au milieu d'un changement), la partition est rouverte depuis le disque, avec la réparation habituelle de la fin.
+4. **Marquage** : `dirty` est levé avant de toucher au moindre fichier.
+5. **Ajout** : choix de la partition (imposée, sinon murmur2 sur la clé comme Kafka, sinon round-robin), écriture, index, politique de `fsync`, rotation et rétention si besoin.
+6. **Publication** : la fin du segment actif, sa base et le premier offset, puis `dirty` remis à zéro, puis la limite de lecture en dernier.
+7. **Libération du verrou**, par `LOCK_UN` explicite.
+
+L'ouverture d'un producteur répare chaque partition sous son verrou, comme avant : c'est ce qui protège d'un état partagé périmé après un redémarrage de la machine.
+
+**Ordre** : les offsets d'une partition suivent l'ordre de prise du verrou ; les messages d'un même producteur gardent l'ordre des appels ; ceux de producteurs différents s'entremêlent dans le temps.
+
+**Crash d'un writer** : l'OS libère son verrou, le writer suivant voit `dirty` levé et répare la partition. Un enregistrement complet écrit juste avant le crash est conservé, même si l'envoi n'avait pas encore répondu (*at-least-once*).
 
 **Rétention**, configurée par topic (`retention_bytes` et `retention_ms` dans `meta.toml`) :
 
@@ -115,7 +133,7 @@ Un crash du processus ne perd que ce qui n'a pas encore été passé à `write`,
 
 Un topic accepte autant de consumers que voulu, sans aucun verrou en lecture. Les offsets sont toujours ceux d'un groupe, même pour un consumer seul.
 
-- **Lecture** : les segments sont lus par `pread`, par gros blocs. Le `mmap` ne sert qu'au fichier `read_limits`. Aucune lecture ne dépasse la limite de lecture. Le log est append-only, donc lire pendant une écriture est sûr.
+- **Lecture** : les segments sont lus par `pread`, par gros blocs. Le `mmap` ne sert qu'au fichier `partitions.state`. Aucune lecture ne dépasse la limite de lecture. Le log est append-only, donc lire pendant une écriture est sûr.
 - **Écriture en cours** : juste après la limite de lecture, le writer peut être en train d'écrire. Un enregistrement illisible à cet endroit n'est donc pas une erreur ; avant la limite, c'en est une. Le lecteur ne répare jamais rien, et découvre seul les nouveaux segments.
 - **Consumer seul** : un groupe à un membre, qui reçoit donc toutes les partitions. Si un second processus ouvre le même nom, il rejoint le groupe et les membres vivants se répartissent les partitions (voir ci-dessous).
 - **Offsets** : `groups/<group>/offsets/<topic>-<p>` fait 12 octets : l'offset (`u64`) puis son CRC32C (`u32`). Il n'est écrit que par le détenteur du verrou de la partition. Le commit est manuel (`commit()`), ou automatique : au plus tôt à l'intervalle choisi, au début de chaque `poll` et à la fermeture. Les messages rendus par un `poll` sont alors considérés comme traités au `poll` suivant.
@@ -172,7 +190,7 @@ use std::time::Duration;
 let db = Db::open("./data")?;
 db.create_topic("orders", TopicConfig { partitions: 4, ..Default::default() })?;
 
-// Producteur : prend le verrou writer du topic, Err(Busy) si déjà pris
+// Producteur : plusieurs peuvent écrire dans le même topic, chacun leur tour
 let mut producer = db.producer("orders")?;
 let (partition, offset) = producer.send(&Message::new(b"cmd-42", b"{...}"))?;
 producer.flush()?;
@@ -192,7 +210,7 @@ loop {
 - **Administration** : `list_topics`, `describe_topic` (configuration, et pour chaque partition son premier offset, sa limite de lecture et ses segments), `committed_offsets` (offsets commités par chaque groupe). `delete_topic` reste à faire.
 - **Inspection** : `mojay::inspect::dump_segment` lit un segment brut, sans rien réparer, et rapporte une éventuelle fin illisible au lieu d'échouer.
 - **Rebalance** : `consumer.take_rebalance_events()` rend les partitions reçues et cédées ; `consumer.assignment()` donne les partitions possédées.
-- **Erreurs** : `Busy`, `TopicExists`, `UnknownTopic`, `OffsetOutOfRange`, `Corrupt`, `Io`.
+- **Erreurs** : `TopicExists`, `UnknownTopic`, `OffsetOutOfRange`, `Corrupt`, `Io`.
 
 ## Garanties et limites
 
@@ -209,7 +227,7 @@ Mojay garantit l'ordre par partition et une livraison at-least-once, sur une seu
 
 - Système de fichiers local uniquement : `flock` n'est pas fiable sur NFS, SMB ou un dossier synchronisé dans le cloud. SQLite a la même restriction.
 - Une seule machine.
-- Un writer par topic, donc le débit d'écriture d'un topic est celui d'un seul processus.
+- Les writers d'une partition écrivent chacun leur tour : le débit d'une partition reste celui d'un writer à la fois (un `flock` et un `fstat` par lot en plus, négligeables devant un `fsync`).
 - Nombre de partitions fixe en V1 : en ajouter changerait la partition associée à chaque clé.
 - La latence d'un rebalance dépend de la période de la boucle (200 ms par défaut).
 
@@ -241,8 +259,9 @@ Le MVP se construit de bas en haut. Chaque étape est testable seule, en commen�
     | `dump` | Affiche un segment en texte (positions, offsets, tailles, contenu, index) et signale une fin illisible sans rien réparer |
 
     Le dossier vient de `--data` ou de `MOJAY_DATA`. Seule `create-topic` crée un dossier de données : une faute de frappe ne doit pas en créer un vide ailleurs.
-7. ✅ Binding Node.js (`bindings/node`), avec napi-rs plutôt qu'une ABI C : appels directs à la bibliothèque, mémoire gérée par napi-rs, définitions TypeScript générées. Chaque producteur et chaque consumer a son propre thread et une file de tâches : `send`, `poll` et `commit` renvoient des Promises, s'exécutent dans l'ordre des appels, et ne bloquent ni la boucle d'événements ni le pool de threads de Node. Les erreurs sont des `Error` avec un `code` stable (`MOJAY_BUSY`…).
-8. Plus tard, selon les besoins : une ABI C (pour Go, C++…) et un binding Python (PyO3).
+7. ✅ Binding Node.js (`bindings/node`), avec napi-rs plutôt qu'une ABI C : appels directs à la bibliothèque, mémoire gérée par napi-rs, définitions TypeScript générées. Chaque producteur et chaque consumer a son propre thread et une file de tâches : `send`, `poll` et `commit` renvoient des Promises, s'exécutent dans l'ordre des appels, et ne bloquent ni la boucle d'événements ni le pool de threads de Node. Les erreurs sont des `Error` avec un `code` stable (`MOJAY_UNKNOWN_TOPIC`…).
+8. ✅ Plusieurs producteurs par topic, dans plusieurs processus et sur la même partition : un verrou d'écriture par partition, pris pour chaque lot, et un état partagé (`partitions.state`) qui permet à chaque writer de rattraper les autres. Format de topic v2.
+9. Plus tard, selon les besoins : une ABI C (pour Go, C++…) et un binding Python (PyO3).
 
 Après la V1 : index temporel (positionnement par timestamp), compression, compaction par clé, notification événementielle, couche protocole Kafka.
 
@@ -254,8 +273,9 @@ Après la V1 : index temporel (positionnement par timestamp), compression, compa
 | Politique `fsync` par défaut | `Always` |
 | Taille de segment par défaut | 64 Mio |
 | Hash de partitionnement | murmur2, compatible Kafka |
-| Lecture des segments | `pread` ; `mmap` seulement pour `read_limits` |
-| Écriture | Un writer par topic |
+| Lecture des segments | `pread` ; `mmap` seulement pour `partitions.state` |
+| Écriture | Plusieurs writers par topic et par partition, chacun leur tour sous un verrou par partition (format de topic v2) |
+| Topics au format v1 | Refusés avec une erreur claire, sans migration : à recréer |
 | Windows | Hors périmètre de la V1 |
 | Voir les messages en texte | `mojay dump` (étape 6) plutôt qu'un second format de stockage : un seul format à fiabiliser |
 | Commit par défaut | Manuel ; automatique sur demande (`auto_commit`) |

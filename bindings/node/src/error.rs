@@ -1,5 +1,5 @@
 //! Errors as seen from JavaScript: a real `Error`, with a stable `code`,
-//! like Node's own errors (`err.code === 'MOJAY_BUSY'`).
+//! like Node's own errors (`err.code === 'MOJAY_UNKNOWN_TOPIC'`).
 
 use napi::bindgen_prelude::JsObjectValue;
 use napi::{Env, JsValue, Status};
@@ -34,7 +34,6 @@ impl BindingError {
                 E::RecordTooLarge { .. } => "MOJAY_RECORD_TOO_LARGE",
                 E::InvalidRecord(_) => "MOJAY_INVALID_RECORD",
                 E::InvalidConfig(_) => "MOJAY_INVALID_CONFIG",
-                E::Busy(_) => "MOJAY_BUSY",
                 E::TopicExists(_) => "MOJAY_TOPIC_EXISTS",
                 E::UnknownTopic(_) => "MOJAY_UNKNOWN_TOPIC",
                 E::InvalidName { .. } => "MOJAY_INVALID_NAME",

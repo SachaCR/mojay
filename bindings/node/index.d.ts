@@ -53,8 +53,9 @@ export declare class Db {
   /** The readable offsets and the size of each partition. */
   describeTopic(name: string): TopicDescription
   /**
-   * Opens the writer of a topic. Fails with `MOJAY_BUSY` if another producer,
-   * in this process or another, is already open on this topic.
+   * Opens a writer on a topic. Any number of producers, in this process or
+   * others, can write to the same topic: they take turns on each partition,
+   * one message (or batch) at a time.
    */
   producer(topic: string): Producer
   /**

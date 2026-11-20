@@ -56,7 +56,7 @@ To test: `npm run build:debug`, then `npm test`. For a complete example:
 | `db.createTopic(name, options?)` | Creates a topic (see below). |
 | `db.listTopics()` | Topic names, sorted. |
 | `db.describeTopic(name)` | For each partition: `startOffset`, `readLimit`, `segments`, `sizeBytes`. |
-| `db.producer(topic)` | The topic's writer. **Only one at a time**, across all processes. |
+| `db.producer(topic)` | A writer on the topic. Any number of producers, in any process, can write to the same topic and partition. |
 | `db.consumer(group, topics, options?)` | A member of the `group` group. |
 
 `createTopic` options, all optional:
@@ -75,7 +75,7 @@ To test: `npm run build:debug`, then `npm test`. For a complete example:
 | --- | --- |
 | `send(message)` | Sends a message. `Promise<{ partition, offset }>`. |
 | `flush()` | Forces everything sent so far onto disk. |
-| `close()` | Finishes pending sends, then releases the topic for another writer. |
+| `close()` | Finishes pending sends, then closes the producer's files. |
 
 A message is `{ key?, value?, headers?, partition?, timestamp? }`. Key, value
 and headers accept a `string` (encoded as UTF-8) or a `Buffer`. The key picks
@@ -112,6 +112,10 @@ since the last commit are read again.
   a time, in order, even without awaiting each Promise:
   `Promise.all(messages.map((m) => producer.send(m)))` writes the messages in
   array order.
+- **Several writers.** Producers in the same process or in several take turns
+  on each partition, one message (or batch) at a time: every message gets its
+  own offset, and each producer's messages keep their order. Messages from
+  different producers interleave in time.
 - **Offsets are `number`s.** Exact up to 2^53 messages per partition.
 - **Close explicitly.** `close()` releases locks and files immediately. A
   forgotten object is closed when the garbage collector collects it, but with
@@ -125,13 +129,12 @@ Every error is an `Error` with a stable `code`, like Node's own errors:
 try {
   db.producer('orders')
 } catch (error) {
-  if (error.code === 'MOJAY_BUSY') console.log('another writer is open')
+  if (error.code === 'MOJAY_UNKNOWN_TOPIC') console.log('create the topic first')
 }
 ```
 
 | Code | Cause |
 | --- | --- |
-| `MOJAY_BUSY` | Another producer is already open on this topic. |
 | `MOJAY_TOPIC_EXISTS` | `createTopic` on a topic that already exists. |
 | `MOJAY_UNKNOWN_TOPIC` | No such topic. |
 | `MOJAY_UNKNOWN_PARTITION` | No such partition. |

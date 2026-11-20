@@ -133,8 +133,8 @@ $ printf 'first\nsecond\nthird\n' | mojay produce orders
 2:0
 ```
 
-A topic has only one writer at a time: if an application is already writing to
-it, `produce` fails with `topic "orders" already has a writer`.
+`produce` works even while applications are writing to the same topic: writers
+take turns on each partition, one batch of messages at a time.
 
 ### `tail`
 

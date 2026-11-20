@@ -158,17 +158,56 @@ test('two members of a group share the partitions, with no duplicates', async (t
   await Promise.all([producer.close(), a.close(), b.close()])
 })
 
-test('close() releases the topic for another writer', async (t) => {
+test('close() is final, and closing twice does nothing', async (t) => {
   const { db } = newDb(t)
   db.createTopic('orders')
   const producer = db.producer('orders')
-  throwsWithCode(() => db.producer('orders'), 'MOJAY_BUSY')
   await producer.send({ value: 'before' })
   await producer.close()
-  await producer.close() // closing twice does nothing
+  await producer.close()
   await rejectsWithCode(producer.send({ value: 'after' }), 'MOJAY_CLOSED')
-  const again = db.producer('orders')
-  await again.close()
+})
+
+test('two producers write to the same partition, each in its own order', async (t) => {
+  const { db } = newDb(t)
+  db.createTopic('orders', { fsync: 'never', segmentBytes: 600 })
+  const a = db.producer('orders')
+  const b = db.producer('orders')
+  const sends = []
+  for (let i = 0; i < 100; i++) {
+    sends.push(a.send({ value: `a:${i}` }), b.send({ value: `b:${i}` }))
+  }
+  const offsets = (await Promise.all(sends)).map((r) => r.offset).sort((x, y) => x - y)
+  assert.deepEqual(offsets, [...Array(200).keys()], 'every offset given once')
+
+  const consumer = db.consumer('check', ['orders'])
+  const values = (await pollExactly(consumer, 200)).map((r) => r.value.toString())
+  for (const writer of ['a', 'b']) {
+    const seqs = values.filter((v) => v.startsWith(`${writer}:`)).map((v) => Number(v.slice(2)))
+    assert.deepEqual(seqs, [...Array(100).keys()], `messages of ${writer} in order`)
+  }
+  await Promise.all([a.close(), b.close(), consumer.close()])
+})
+
+test('producers in two Node processes write to the same topic', async (t) => {
+  const { dir, db } = newDb(t)
+  db.createTopic('orders', { fsync: 'never', segmentBytes: 4096 })
+
+  const child = (writer) =>
+    new Promise((resolve, reject) => {
+      const p = spawn(process.execPath, [join(import.meta.dirname, 'fixtures', 'writer.mjs'), dir, writer])
+      p.stderr.on('data', (chunk) => process.stderr.write(chunk))
+      p.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`exit code ${code}`))))
+    })
+  await Promise.all([child('p1'), child('p2')])
+
+  const consumer = db.consumer('check', ['orders'])
+  const values = (await pollExactly(consumer, 1000)).map((r) => r.value.toString())
+  for (const writer of ['p1', 'p2']) {
+    const seqs = values.filter((v) => v.startsWith(`${writer}:`)).map((v) => Number(v.split(':')[1]))
+    assert.deepEqual(seqs, [...Array(500).keys()], `messages of ${writer} in order`)
+  }
+  await consumer.close()
 })
 
 test('errors carry a stable code', async (t) => {

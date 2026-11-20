@@ -228,10 +228,15 @@ fn errors_are_explained_and_exit_with_failure() {
         "nothing is created"
     );
 
-    // A producer is already open: the CLI cannot write at the same time.
+    // A producer is open in this process: the CLI can still write next to it.
     let db = Db::open(dir.path()).unwrap();
-    let _writer = db.producer("orders").unwrap();
-    assert!(fails(dir.path(), &["produce", "orders", "x"]).contains("already has a writer"));
+    let mut writer = db.producer("orders").unwrap();
+    writer.send(&mojay::Message::with_value("app")).unwrap();
+    assert_eq!(ok(dir.path(), &["produce", "orders", "cli"]), "0:1\n");
+    writer
+        .send(&mojay::Message::with_value("app again"))
+        .unwrap();
+    assert_eq!(ok(dir.path(), &["tail", "orders"]).lines().count(), 3);
 }
 
 #[test]

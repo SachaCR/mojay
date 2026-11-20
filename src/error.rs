@@ -25,10 +25,6 @@ pub enum Error {
     #[error("invalid configuration: {0}")]
     InvalidConfig(String),
 
-    /// Another writer (process or object) already holds the topic lock.
-    #[error("topic \"{0}\" already has a writer")]
-    Busy(String),
-
     #[error("topic \"{0}\" already exists")]
     TopicExists(String),
 

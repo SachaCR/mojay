@@ -19,7 +19,7 @@ Les couches ne dépendent que des couches en dessous d'elles, jamais l'inverse.
 | Format | `record` | Encoder et décoder un enregistrement | Aucune I/O fichier |
 | Stockage | `segment` | Un fichier `.log` et son index, la récupération | Ne connaît ni topic ni partition |
 | Partition | `log` | Une suite de segments, la rotation, la rétention, la politique fsync | Aucun verrou inter-processus |
-| Topic | `topic` | Partitions, verrou du writer, limites de lecture | Ne lit pas d'octets bruts |
+| Topic | `topic` | Partitions, verrous d'écriture, état partagé | Ne lit pas d'octets bruts |
 | Groupes | `group` | Consumers, membres, répartition des partitions, offsets commités | Ne touche pas aux segments |
 | API | `db` | Le point d'entrée public | Aucune logique métier propre |
 | CLI | crate `cli/` | Arguments, affichage, une commande par fichier | Ne lit jamais les fichiers de données : passe par la bibliothèque |
@@ -32,7 +32,7 @@ Modules de support, chacun avec une seule responsabilité :
 - `group::quota` (logique pure) : part de chaque membre d'un groupe.
 - `log::retention` (logique pure) : quels segments supprimer.
 - `meta` : fichiers `clé = valeur` (`mojay.toml`, `meta.toml`), lecture stricte.
-- `read_limits` : les limites de lecture partagées en `mmap`. Seul module `unsafe`.
+- `partition_state` : l'état partagé des partitions (limite de lecture, état des writers), en `mmap`. Seul module `unsafe`.
 - `lock` : verrous `flock` inter-processus.
 - `durable` : écritures atomiques et `fsync` de dossier.
 - `inspect` : lecture brute d'un segment pour `mojay dump`, sans jamais rien réparer.
@@ -94,7 +94,7 @@ de démonstration de `demo/` (voir `demo/README.md`), qui n'utilisent que l'API 
   fichier : un enfant créé par `fork` partage le verrou jusqu'à son `exec`.
 - Lectures positionnelles (`pread`) : pas de curseur de fichier partagé.
 - Un lecteur ne modifie jamais rien sur le disque : seul le writer répare.
-- `unsafe` est interdit, sauf dans le module qui mappe le fichier `read_limits`. Le binding
+- `unsafe` est interdit, sauf dans le module qui mappe le fichier `partitions.state`. Le binding
   Node.js n'en contient pas : napi-rs s'en charge. Chaque bloc
   `unsafe` porte un commentaire `// SAFETY:` qui justifie l'invariant.
 
