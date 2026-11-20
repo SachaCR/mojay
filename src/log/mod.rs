@@ -8,6 +8,7 @@
 //! garantit qu'un seul writer existe par partition.
 
 mod reader;
+mod retention;
 mod writer;
 
 use std::fs;
@@ -15,6 +16,7 @@ use std::path::Path;
 use std::time::Duration;
 
 pub(crate) use reader::PartitionReader;
+pub use retention::Retention;
 pub use writer::PartitionLog;
 
 use crate::error::{Error, Result, corrupt};
@@ -42,6 +44,8 @@ pub struct LogConfig {
     /// Nombre d'octets écrits entre deux entrées d'index.
     pub index_interval_bytes: u64,
     pub fsync: FsyncPolicy,
+    /// Limites de taille et d'âge de la partition. Par défaut, aucune.
+    pub retention: Retention,
 }
 
 impl Default for LogConfig {
@@ -50,6 +54,7 @@ impl Default for LogConfig {
             segment_max_bytes: 64 * 1024 * 1024,
             index_interval_bytes: 4096,
             fsync: FsyncPolicy::Always,
+            retention: Retention::default(),
         }
     }
 }
@@ -92,6 +97,23 @@ pub(crate) fn list_segment_bases(dir: &Path) -> Result<Vec<u64>> {
     }
     bases.sort_unstable();
     Ok(bases)
+}
+
+/// Supprime les index dont le `.log` n'existe plus : restes d'une suppression
+/// de segment interrompue par un crash.
+pub(crate) fn remove_orphan_indexes(dir: &Path, bases: &[u64]) -> Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let path = entry?.path();
+        let base = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(|n| n.strip_suffix(".idx"))
+            .and_then(|stem| stem.parse::<u64>().ok());
+        if base.is_some_and(|b| !bases.contains(&b)) {
+            fs::remove_file(&path)?;
+        }
+    }
+    Ok(())
 }
 
 /// Pourquoi une lecture à travers les segments s'est arrêtée.

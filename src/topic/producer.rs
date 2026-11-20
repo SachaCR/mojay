@@ -3,15 +3,20 @@
 use std::ops::Range;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use super::background_sync::{self, BackgroundSync, SharedLogs};
 use super::{READ_LIMITS_FILE, WRITER_LOCK_FILE, load_config, partition_dir};
 use crate::error::{Error, Result};
 use crate::lock::FileLock;
-use crate::log::{FsyncPolicy, PartitionLog};
+use crate::log::{FsyncPolicy, PartitionLog, Retention};
 use crate::partitioner::Partitioner;
 use crate::read_limits::ReadLimitsWriter;
 use crate::record::Message;
+
+/// Délai minimal entre deux vérifications de l'âge des segments pendant les
+/// envois. La limite de taille, elle, est appliquée à chaque nouveau segment.
+const RETENTION_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Le writer d'un topic. Il tient le verrou du topic tant qu'il vit : un second
 /// producteur, dans ce processus ou un autre, reçoit [`Error::Busy`].
@@ -25,6 +30,8 @@ pub struct Producer {
     logs: SharedLogs,
     read_limits: ReadLimitsWriter,
     background_sync: Option<BackgroundSync>,
+    retention: Retention,
+    last_retention_check: Instant,
     /// Déclaré en dernier : le verrou n'est relâché qu'une fois tout le reste fermé.
     _lock: FileLock,
 }
@@ -57,6 +64,8 @@ impl Producer {
             logs,
             read_limits,
             background_sync,
+            retention: config.log.retention,
+            last_retention_check: Instant::now(),
             _lock: lock,
         })
     }
@@ -103,7 +112,28 @@ impl Producer {
         // Publié après l'écriture (et le fsync avec `Always`) : un lecteur ne
         // voit jamais un message qui n'est pas entièrement écrit.
         self.read_limits.publish(partition, log.next_offset())?;
+        drop(logs);
+
+        if self.retention.max_age.is_some()
+            && self.last_retention_check.elapsed() >= RETENTION_CHECK_INTERVAL
+        {
+            self.enforce_retention()?;
+        }
         Ok(range)
+    }
+
+    /// Applique la rétention à toutes les partitions maintenant, et renvoie le
+    /// nombre de segments supprimés.
+    ///
+    /// Elle est déjà appliquée à l'ouverture, à chaque nouveau segment, et
+    /// (pour la limite d'âge) au plus une fois par seconde pendant les envois.
+    /// Un producteur qui n'envoie rien peut l'appeler régulièrement.
+    pub fn enforce_retention(&mut self) -> Result<usize> {
+        self.last_retention_check = Instant::now();
+        let mut logs = background_sync::lock(&self.logs);
+        logs.iter_mut()
+            .map(PartitionLog::enforce_retention)
+            .sum::<Result<usize>>()
     }
 
     /// Force l'écriture sur le disque de tous les messages ajoutés, quelle que

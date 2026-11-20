@@ -91,7 +91,17 @@ Un seul processus écrit dans un topic à la fois : celui qui tient le verrou `f
 2. **Récupération** : pour chaque partition, on relit le dernier segment depuis la dernière entrée d'index et on valide longueur et CRC. On tronque tout ce qui suit le dernier enregistrement valide, puis on recalcule l'index et la limite de lecture.
 3. **Choix de la partition** : imposée par l'appelant, sinon hash de la clé (murmur2, comme Kafka), sinon round-robin quand il n'y a pas de clé.
 4. **Ajout** : on écrit l'enregistrement, on met à jour l'index si besoin, on applique la politique de `fsync`, puis on publie la nouvelle limite de lecture.
-5. **Rotation et rétention** : on ouvre un nouveau segment au-delà de la taille maximale. Le writer supprime les segments entiers les plus anciens qui dépassent la rétention (taille ou durée), et met à jour le premier offset disponible.
+5. **Rotation et rétention** : on ouvre un nouveau segment au-delà de la taille maximale. Le writer supprime les segments scellés les plus anciens qui dépassent la rétention ; le premier offset disponible est simplement la base du premier segment restant.
+
+**Rétention**, configurée par topic (`retention_bytes` et `retention_ms` dans `meta.toml`) :
+
+- **Par défaut, aucune** : on garde tout. Supprimer des données sans l'avoir demandé serait une mauvaise surprise.
+- **Taille** : la partition, segment actif compris, ne dépasse pas `max_bytes`, vérifié à chaque ajout à partir des tailles connues en mémoire. Elle ne la dépasse que si le segment actif seul la dépasse.
+- **Âge** : un segment scellé est supprimé quand sa dernière écriture date de plus de `max_age`. On utilise la date du fichier, pas les timestamps des messages, fournis par les producteurs et donc peu fiables. Vérifié à l'ouverture, à chaque nouveau segment, au plus une fois par seconde pendant les envois, et à la demande (`Producer::enforce_retention`).
+- **Jamais de trou** : on ne supprime que des segments scellés entiers, du plus ancien au plus récent, jamais le segment actif.
+- **Ordre de suppression** : le `.log` puis l'index. Un crash entre les deux laisse un index orphelin, nettoyé à l'ouverture suivante.
+- **Lecteurs** : un lecteur remarque une suppression en moins de 500 ms et relâche le fichier. Sans cela, son descripteur ouvert garderait l'espace disque occupé indéfiniment.
+- **Limite** : la rétention n'est appliquée que lorsqu'un producteur est ouvert sur le topic.
 
 | Politique `fsync` | Quand | Survit à un crash du processus | Survit à une coupure de courant |
 | --- | --- | --- | --- |
@@ -110,7 +120,7 @@ Un topic accepte autant de consumers que voulu, sans aucun verrou en lecture. Le
 - **Consumer seul** : un groupe à un membre, qui reçoit donc toutes les partitions. Si un second processus ouvre le même nom, il rejoint le groupe et les membres vivants se répartissent les partitions (voir ci-dessous).
 - **Offsets** : `groups/<group>/offsets/<topic>-<p>` fait 12 octets : l'offset (`u64`) puis son CRC32C (`u32`). Il n'est écrit que par le détenteur du verrou de la partition. Le commit est manuel (`commit()`), ou automatique : au plus tôt à l'intervalle choisi, au début de chaque `poll` et à la fermeture. Les messages rendus par un `poll` sont alors considérés comme traités au `poll` suivant.
 - **Point de départ** : sans offset commité, on part du début (`Earliest`) ou de la fin (`Latest`). Un offset commité au-delà de la limite de lecture (messages perdus avec `fsync` `Never` ou `Interval`) est ramené à la limite, pour ne sauter aucun nouveau message.
-- **Offset disparu** : si la rétention a supprimé l'offset demandé, la même politique s'applique.
+- **Offset disparu** : si la rétention a supprimé l'offset demandé, la même politique s'applique : avec `Earliest`, le consumer repart du nouveau premier offset, sans erreur.
 - **Attente de nouveaux messages** : en V1, un polling adaptatif de la limite de lecture en mémoire partagée, de 1 ms à 50 ms selon l'activité. Le coût est négligeable, car c'est une simple lecture mémoire.
 
 `inotify` et `kqueue` ne signalent pas les écritures faites via `mmap`. Une notification événementielle demandera donc un canal séparé, à étudier après la V1.
@@ -217,7 +227,7 @@ Le MVP se construit de bas en haut. Chaque étape est testable seule, en commen�
 2. ✅ Topics, writer verrouillé et limites de lecture partagées. Tests multi-processus : second writer refusé, writer tué en pleine écriture, lecteur qui suit un writer d'un autre processus.
 3. ✅ Consumer seul : lecture et offsets commités, commit manuel ou automatique, relais vers un second membre à l'arrêt ou au crash du premier. Tests multi-processus : membre tué, reprise exacte au dernier commit.
 4. ✅ Consumer groups à plusieurs membres : quotas, arrivées et départs, détection des membres morts, événements de rebalance. Tests multi-processus : deux processus se partagent le travail sans doublon, un membre tué est remplacé.
-5. Rétention par taille et par durée.
+5. ✅ Rétention par taille et par durée : suppression des plus vieux segments scellés, lecteurs qui relâchent les fichiers supprimés, consumers en retard qui repartent du nouveau début.
 6. CLI `mojay` pour déboguer : `create-topic`, `produce`, `tail`, `describe`, et `dump`, qui affiche un segment en texte (offsets, positions, CRC, clés, valeurs) pour vérifier à l'œil ce qui est stocké.
 7. ABI C, puis un premier binding Python.
 
@@ -236,5 +246,7 @@ Après la V1 : index temporel (positionnement par timestamp), compression, compa
 | Windows | Hors périmètre de la V1 |
 | Voir les messages en texte | `mojay dump` (étape 6) plutôt qu'un second format de stockage : un seul format à fiabiliser |
 | Commit par défaut | Manuel ; automatique sur demande (`auto_commit`) |
+| Rétention par défaut | Aucune : on garde tout |
+| Âge d'un segment | Date de sa dernière écriture sur le disque, pas les timestamps des producteurs |
 | Commit d'une partition cédée | Seulement en commit automatique ; en manuel, relecture depuis le dernier commit plutôt qu'un risque de perte |
 | Notification des rebalances | `take_rebalance_events()` plutôt que des callbacks |

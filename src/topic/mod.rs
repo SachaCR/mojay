@@ -26,7 +26,7 @@ pub use reader::TopicReader;
 
 use crate::durable::{sync_dir, write_atomic};
 use crate::error::{Error, Result, corrupt};
-use crate::log::{FsyncPolicy, LogConfig};
+use crate::log::{FsyncPolicy, LogConfig, Retention};
 use crate::meta::{self, Meta, Value};
 use crate::read_limits;
 
@@ -158,6 +158,13 @@ fn encode_config(config: &TopicConfig) -> String {
     if let Some(ms) = interval_ms {
         entries.push(("fsync_interval_ms", Value::Int(ms)));
     }
+    // Clés facultatives : un meta.toml sans elles signifie « aucune rétention ».
+    if let Some(bytes) = config.log.retention.max_bytes {
+        entries.push(("retention_bytes", Value::Int(bytes)));
+    }
+    if let Some(age) = config.log.retention.max_age {
+        entries.push(("retention_ms", Value::Int(age.as_millis() as u64)));
+    }
     meta::format(
         "Métadonnées d'un topic Mojay. Ne pas modifier à la main.",
         &entries,
@@ -176,6 +183,8 @@ fn load_config(topic_dir: &Path) -> Result<TopicConfig> {
         "index_interval_bytes",
         "fsync",
         "fsync_interval_ms",
+        "retention_bytes",
+        "retention_ms",
     ])?;
     let version = meta.int("format_version")?;
     if version != META_FORMAT_VERSION {
@@ -203,6 +212,10 @@ fn load_config(topic_dir: &Path) -> Result<TopicConfig> {
             segment_max_bytes: meta.int("segment_max_bytes")?,
             index_interval_bytes: meta.int("index_interval_bytes")?,
             fsync,
+            retention: Retention {
+                max_bytes: meta.opt_int("retention_bytes")?,
+                max_age: meta.opt_int("retention_ms")?.map(Duration::from_millis),
+            },
         },
     };
     config
@@ -229,6 +242,10 @@ mod tests {
                     segment_max_bytes: 1 << 20,
                     index_interval_bytes: 512,
                     fsync,
+                    retention: Retention {
+                        max_bytes: Some(1 << 30),
+                        max_age: Some(Duration::from_secs(3600)),
+                    },
                 },
             };
             fs::write(dir.path().join(META_FILE), encode_config(&config)).unwrap();

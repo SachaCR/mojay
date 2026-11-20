@@ -29,6 +29,7 @@ pub fn config(partitions: u32, segment_max_bytes: u64, fsync: FsyncPolicy) -> To
             segment_max_bytes,
             index_interval_bytes: 256,
             fsync,
+            ..LogConfig::default()
         },
     }
 }

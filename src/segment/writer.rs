@@ -1,9 +1,10 @@
 //! Le côté writer d'un segment : ajout, index, vérification et réparation de la fin.
 
-use std::fs::{File, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufReader, Read};
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use super::{
     HEADER_SIZE, PosReader, READ_BUFFER_SIZE, ReadRequest, SegmentRead, check_header, header_bytes,
@@ -142,6 +143,24 @@ impl Segment {
             self.index.extend(new_entries);
         }
         Ok(())
+    }
+
+    /// Date de la dernière écriture dans le `.log`.
+    pub(crate) fn last_write(&self) -> Result<SystemTime> {
+        Ok(self.log.metadata()?.modified()?)
+    }
+
+    /// Supprime le segment du disque : le `.log` d'abord, puis l'index. Un
+    /// crash entre les deux laisse un index orphelin, ignoré puis nettoyé à
+    /// la prochaine ouverture ; jamais un log sans son début.
+    pub(crate) fn delete(self) -> Result<()> {
+        let index_path = self.log_path.with_extension("idx");
+        fs::remove_file(&self.log_path)?;
+        match fs::remove_file(&index_path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e.into()),
+        }
     }
 
     /// Force l'écriture du log et de l'index sur le disque.

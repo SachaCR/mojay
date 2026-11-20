@@ -4,8 +4,13 @@
 use std::fs;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
-use super::{FsyncPolicy, LogConfig, list_segment_bases, read_across, segment_log_path};
+use super::retention::{self, SealedSegment};
+use super::{
+    FsyncPolicy, LogConfig, list_segment_bases, read_across, remove_orphan_indexes,
+    segment_log_path,
+};
 use crate::durable::sync_dir;
 use crate::error::{Error, Result, corrupt};
 use crate::record::{self, Message, Record};
@@ -45,11 +50,16 @@ impl PartitionLog {
                 .collect::<Result<_>>()?
         };
         check_continuity(&dir, &segments)?;
-        Ok(Self {
+        // D'après les segments ouverts, premier segment tout juste créé compris.
+        let bases: Vec<u64> = segments.iter().map(Segment::base_offset).collect();
+        remove_orphan_indexes(&dir, &bases)?;
+        let mut log = Self {
             dir,
             config,
             segments,
-        })
+        };
+        log.enforce_retention()?;
+        Ok(log)
     }
 
     /// Premier offset encore disponible.
@@ -82,10 +92,12 @@ impl PartitionLog {
         let timestamp = record::now_millis();
 
         let mut pending = PendingWrite::default();
+        let mut rolled = false;
         for (message, size) in messages.iter().zip(sizes) {
             if self.needs_roll(&pending, size) {
                 self.write_pending(&mut pending)?;
                 self.roll()?;
+                rolled = true;
             }
             let offset = self.active().next_offset() + pending.sizes.len() as u64;
             let ts = message.timestamp.unwrap_or(timestamp);
@@ -97,7 +109,53 @@ impl PartitionLog {
         if self.config.fsync == FsyncPolicy::Always {
             self.active().sync()?;
         }
+        // Un nouveau segment scellé peut avoir vieilli ; la taille, elle, se
+        // vérifie à chaque ajout, à partir des tailles connues en mémoire.
+        if rolled || self.exceeds_max_bytes() {
+            self.enforce_retention()?;
+        }
         Ok(first_offset..self.next_offset())
+    }
+
+    /// Supprime les segments scellés les plus anciens qui dépassent la
+    /// rétention configurée, et renvoie leur nombre.
+    ///
+    /// Appelé à l'ouverture et à chaque nouveau segment. La limite d'âge
+    /// avance avec le temps, sans écriture : appeler cette méthode
+    /// régulièrement l'applique aussi pendant les périodes calmes.
+    pub fn enforce_retention(&mut self) -> Result<usize> {
+        let retention = self.config.retention;
+        if retention.is_unlimited() {
+            return Ok(0);
+        }
+        let (active, sealed) = self
+            .segments
+            .split_last()
+            .expect("un log a toujours un segment actif");
+        let sealed = sealed
+            .iter()
+            .map(|s| {
+                Ok(SealedSegment {
+                    size: s.size(),
+                    last_write: match retention.max_age {
+                        Some(_) => Some(s.last_write()?),
+                        None => None,
+                    },
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let count =
+            retention::segments_to_delete(&sealed, active.size(), &retention, SystemTime::now());
+        if count == 0 {
+            return Ok(0);
+        }
+        // Les plus anciens d'abord : en cas d'échec, ce qui reste est toujours
+        // une suite continue de segments.
+        for segment in self.segments.drain(..count) {
+            segment.delete()?;
+        }
+        sync_dir(&self.dir)?;
+        Ok(count)
     }
 
     /// Lit les enregistrements à partir de `offset`, sans dépasser `max_bytes`
@@ -124,6 +182,13 @@ impl PartitionLog {
             |i, req, out| self.segments[i].read(req, out),
         )?;
         Ok(out)
+    }
+
+    fn exceeds_max_bytes(&self) -> bool {
+        self.config.retention.max_bytes.is_some_and(|max| {
+            // Un seul segment : rien à supprimer, le segment actif reste.
+            self.segments.len() > 1 && self.segments.iter().map(Segment::size).sum::<u64>() > max
+        })
     }
 
     /// Force l'écriture sur le disque de tout ce qui a été ajouté.

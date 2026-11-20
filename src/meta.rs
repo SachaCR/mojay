@@ -60,6 +60,14 @@ impl Meta {
         }
     }
 
+    /// Comme [`int`](Self::int), pour une clé facultative.
+    pub(crate) fn opt_int(&self, key: &str) -> Result<Option<u64>> {
+        match self.values.get(key) {
+            None => Ok(None),
+            Some(_) => self.int(key).map(Some),
+        }
+    }
+
     pub(crate) fn str(&self, key: &str) -> Result<&str> {
         match self.values.get(key) {
             Some(Value::Str(s)) => Ok(s),
