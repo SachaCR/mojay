@@ -23,6 +23,7 @@ Les couches ne dépendent que des couches en dessous d'elles, jamais l'inverse.
 | Groupes | `group` | Consumers, membres, répartition des partitions, offsets commités | Ne touche pas aux segments |
 | API | `db` | Le point d'entrée public | Aucune logique métier propre |
 | CLI | crate `cli/` | Arguments, affichage, une commande par fichier | Ne lit jamais les fichiers de données : passe par la bibliothèque |
+| Binding Node.js | crate `bindings/node/` (napi-rs) | Conversions Rust ↔ JavaScript, un thread par producteur et consumer | Aucune logique métier : tout passe par l'API publique |
 
 Modules de support, chacun avec une seule responsabilité :
 
@@ -91,7 +92,8 @@ de démonstration de `demo/` (voir `demo/README.md`), qui n'utilisent que l'API 
   fichier : un enfant créé par `fork` partage le verrou jusqu'à son `exec`.
 - Lectures positionnelles (`pread`) : pas de curseur de fichier partagé.
 - Un lecteur ne modifie jamais rien sur le disque : seul le writer répare.
-- `unsafe` est interdit, sauf dans le module qui mappe le fichier `read_limits`. Chaque bloc
+- `unsafe` est interdit, sauf dans le module qui mappe le fichier `read_limits`. Le binding
+  Node.js n'en contient pas : napi-rs s'en charge. Chaque bloc
   `unsafe` porte un commentaire `// SAFETY:` qui justifie l'invariant.
 
 ## 4. Tests
@@ -110,5 +112,12 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-Les trois doivent passer sans avertissement. Les dépendances restent minimales :
+Si le binding Node.js est touché, ses tests aussi, depuis `bindings/node` :
+
+```bash
+npm run build:debug
+npm test
+```
+
+Les vérifications doivent passer sans avertissement. Les dépendances restent minimales :
 chaque nouvelle crate se justifie (maintenance, licence, taille).

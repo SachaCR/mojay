@@ -241,7 +241,8 @@ Le MVP se construit de bas en haut. Chaque étape est testable seule, en commen�
     | `dump` | Affiche un segment en texte (positions, offsets, tailles, contenu, index) et signale une fin illisible sans rien réparer |
 
     Le dossier vient de `--data` ou de `MOJAY_DATA`. Seule `create-topic` crée un dossier de données : une faute de frappe ne doit pas en créer un vide ailleurs.
-7. ABI C, puis un premier binding Python.
+7. ✅ Binding Node.js (`bindings/node`), avec napi-rs plutôt qu'une ABI C : appels directs à la bibliothèque, mémoire gérée par napi-rs, définitions TypeScript générées. Chaque producteur et chaque consumer a son propre thread et une file de tâches : `send`, `poll` et `commit` renvoient des Promises, s'exécutent dans l'ordre des appels, et ne bloquent ni la boucle d'événements ni le pool de threads de Node. Les erreurs sont des `Error` avec un `code` stable (`MOJAY_BUSY`…).
+8. Plus tard, selon les besoins : une ABI C (pour Go, C++…) et un binding Python (PyO3).
 
 Après la V1 : index temporel (positionnement par timestamp), compression, compaction par clé, notification événementielle, couche protocole Kafka.
 
@@ -262,3 +263,5 @@ Après la V1 : index temporel (positionnement par timestamp), compression, compa
 | Âge d'un segment | Date de sa dernière écriture sur le disque, pas les timestamps des producteurs |
 | Commit d'une partition cédée | Seulement en commit automatique ; en manuel, relecture depuis le dernier commit plutôt qu'un risque de perte |
 | Notification des rebalances | `take_rebalance_events()` plutôt que des callbacks |
+| Premier binding | Node.js avec napi-rs, avant l'ABI C et Python |
+| Appels asynchrones en Node | Un thread et une file par producteur ou consumer : ordre des appels garanti, pool de threads de Node jamais occupé |
