@@ -12,14 +12,13 @@ mojay tail orders --follow
 
 ## Installation
 
-From the repository root:
-
 ```bash
-cargo install --path cli
+cargo install mojay-cli
 ```
 
-The `mojay` binary is then in `~/.cargo/bin`. Without installing it, you can
-also run it with `cargo run -p mojay-cli -- <command>`.
+The `mojay` binary is then in `~/.cargo/bin`. From a clone of the repository,
+`cargo install --path cli` installs the current version, and
+`cargo run -p mojay-cli -- <command>` runs it without installing.
 
 ## The data folder
 

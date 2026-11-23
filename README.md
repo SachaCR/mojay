@@ -43,16 +43,16 @@ await db.producer("orders").send({ key: "customer-42", value: '{"total": 99}' })
 | Folder | Content |
 | --- | --- |
 | `src/` | The `mojay` library. |
-| [`cli/`](cli/README.md) | The `mojay` command: create topics, produce, tail, describe, dump segments. |
-| [`bindings/node/`](bindings/node/README.md) | The Node.js package (napi-rs). |
-| [`bench/`](bench/README.md) | Throughput and latency benchmarks. |
-| [`demo/`](demo/README.md) | A producer and a consumer group, as separate programs. |
-| [`website/`](website/README.md) | The [mojay.dev](https://mojay.dev) website (Docusaurus). |
-| [`docs/conception.md`](docs/conception.md) | The design note, in French: the reference for the disk format and behavior. |
+| [`cli/`](https://github.com/SachaCR/mojay/blob/main/cli/README.md) | The `mojay` command: create topics, produce, tail, describe, dump segments. |
+| [`bindings/node/`](https://github.com/SachaCR/mojay/blob/main/bindings/node/README.md) | The Node.js package (napi-rs). |
+| [`bench/`](https://github.com/SachaCR/mojay/blob/main/bench/README.md) | Throughput and latency benchmarks. |
+| [`demo/`](https://github.com/SachaCR/mojay/blob/main/demo/README.md) | A producer and a consumer group, as separate programs. |
+| [`website/`](https://github.com/SachaCR/mojay/blob/main/website/README.md) | The [mojay.dev](https://mojay.dev) website (Docusaurus). |
+| [`docs/conception.md`](https://github.com/SachaCR/mojay/blob/main/docs/conception.md) | The design note, in French: the reference for the disk format and behavior. |
 
 Mojay runs on macOS and Linux, on a local disk.
 
 ## License
 
-Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
-[MIT license](LICENSE-MIT), at your option.
+Licensed under either of [Apache License, Version 2.0](https://github.com/SachaCR/mojay/blob/main/LICENSE-APACHE) or
+[MIT license](https://github.com/SachaCR/mojay/blob/main/LICENSE-MIT), at your option.

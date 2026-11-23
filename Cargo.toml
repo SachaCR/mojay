@@ -5,6 +5,8 @@ members = [".", "cli", "demo/producer", "demo/consumer", "bindings/node", "bench
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/SachaCR/mojay"
 homepage = "https://mojay.dev"
+# Let chains and `slice::as_chunks`. Checked by the CI.
+rust-version = "1.88"
 
 [package]
 name = "mojay"
@@ -14,10 +16,13 @@ description = "Topics, partitions, offsets and consumer groups in a local folder
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+rust-version.workspace = true
 documentation = "https://docs.rs/mojay"
 readme = "README.md"
 keywords = ["kafka", "log", "queue", "embedded", "streaming"]
 categories = ["database-implementations", "data-structures"]
+# The library only: the other folders are separate crates, projects or docs.
+include = ["/src", "/tests", "/README.md", "/LICENSE-MIT", "/LICENSE-APACHE", "/Cargo.toml"]
 
 [dependencies]
 crc32c = "0.6.9"

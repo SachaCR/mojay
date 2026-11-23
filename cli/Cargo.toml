@@ -6,6 +6,10 @@ description = "Command-line tool to inspect and manipulate a Mojay data folder"
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+rust-version.workspace = true
+readme = "README.md"
+keywords = ["kafka", "log", "queue", "cli", "streaming"]
+categories = ["command-line-utilities", "development-tools::debugging"]
 
 [[bin]]
 name = "mojay"
@@ -15,7 +19,7 @@ doc = false
 
 [dependencies]
 clap = { version = "4.6.9", features = ["derive", "env"] }
-mojay = { path = ".." }
+mojay = { path = "..", version = "0.1.0" }
 
 [dev-dependencies]
 tempfile = "3.27.0"

@@ -1,0 +1,194 @@
+name: Release
+
+# Publishes a version when a tag `v<version>` is pushed (see RELEASING.md):
+# the crates `mojay` and `mojay-cli` to crates.io, the `mojay` package to npm
+# with prebuilt binaries for every supported platform, and a GitHub release.
+#
+# Nothing is published unless every binary builds and its tests pass. Each
+# publish step skips a version that is already published, so a failed run
+# can be re-run safely.
+#
+# Run by hand (Actions → Release → Run workflow), it is a rehearsal: same
+# checks and builds, `cargo publish --dry-run` and `npm publish --dry-run`,
+# no GitHub release. Nothing is published.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check-version:
+    name: Check versions
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: version
+        name: Tag, crates and npm package must agree
+        run: |
+          lib=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "mojay") | .version')
+          cli=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "mojay-cli") | .version')
+          npm=$(jq -r .version bindings/node/package.json)
+          # A rehearsal has no tag: it checks the version of the code.
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then version="${GITHUB_REF_NAME#v}"; else version="$lib"; fi
+          echo "tag $version, mojay $lib, mojay-cli $cli, npm $npm"
+          if [ "$lib" != "$version" ] || [ "$cli" != "$version" ] || [ "$npm" != "$version" ]; then
+            echo "::error::The tag does not match the versions in Cargo.toml and package.json"
+            exit 1
+          fi
+          grep -q "^## \[$version\]" CHANGELOG.md || { echo "::error::CHANGELOG.md has no section for $version"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  node-binaries:
+    name: Node.js binary (${{ matrix.target }})
+    needs: check-version
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            test: true
+          # Cross-compiled on the arm64 runner: built, not tested.
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            test: false
+          # The oldest supported Ubuntu sets the minimum glibc (2.35).
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            test: true
+          - os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            test: true
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: bindings/node
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: bindings/node/package-lock.json
+      - run: npm ci
+      - name: Build
+        run: npx napi build --platform --release --target ${{ matrix.target }}
+      - name: Test
+        if: matrix.test
+        run: npm test
+      - uses: actions/upload-artifact@v7
+        with:
+          name: binary-${{ matrix.target }}
+          path: bindings/node/mojay.*.node
+          if-no-files-found: error
+
+  crates:
+    name: Publish to crates.io
+    needs: [check-version, node-binaries]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Publish mojay and mojay-cli
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          status=$(curl -s -o /dev/null -w "%{http_code}" -A "mojay-release" "https://crates.io/api/v1/crates/mojay/$VERSION")
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            cargo publish --dry-run -p mojay -p mojay-cli
+          elif [ "$status" = "200" ]; then
+            echo "mojay $VERSION is already on crates.io: skipping."
+          else
+            cargo publish -p mojay -p mojay-cli
+          fi
+
+  npm:
+    name: Publish to npm
+    needs: [check-version, node-binaries]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # npm provenance: links the package to this workflow run.
+      id-token: write
+    defaults:
+      run:
+        working-directory: bindings/node
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: binary-*
+          path: bindings/node
+          merge-multiple: true
+      - name: Check the package
+        run: |
+          cp ../../LICENSE-MIT ../../LICENSE-APACHE .
+          ls -l mojay.*.node
+          count=$(ls mojay.*.node | wc -l)
+          if [ "$count" -ne 4 ]; then
+            echo "::error::Expected 4 binaries, found $count"
+            exit 1
+          fi
+          npm pack --dry-run
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            npm publish --dry-run --access public
+          elif npm view "mojay@$VERSION" version >/dev/null 2>&1; then
+            echo "mojay@$VERSION is already on npm: skipping."
+          else
+            npm publish --provenance --access public
+          fi
+
+  github-release:
+    name: GitHub release
+    needs: [check-version, crates, npm]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: binary-*
+          path: binaries
+          merge-multiple: true
+      - name: Create the release from CHANGELOG.md
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          # The section of this version: from its heading to the next one.
+          awk -v v="$VERSION" '
+            /^## \[/ { if (found) exit; if (index($0, "## [" v "]") == 1) { found = 1; next } }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists: skipping."
+          else
+            gh release create "$GITHUB_REF_NAME" --title "Mojay $VERSION" --notes-file notes.md binaries/*.node
+          fi

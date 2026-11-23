@@ -23,7 +23,17 @@ The binding is written with [napi-rs](https://napi.rs): it calls the Rust
 library directly, with no server or service to run. The TypeScript definitions
 (`index.d.ts`) are generated from the Rust code.
 
-## Building
+## Installation
+
+```bash
+npm install mojay
+```
+
+The package ships prebuilt binaries for macOS (arm64, x64) and Linux with
+glibc 2.35 or later (x64, arm64), so installing it needs neither Rust nor a
+compiler. Windows and Alpine (musl) are not supported.
+
+## Building from source
 
 You need Rust (`rustup`) and Node.js 18 or later. From `bindings/node`:
 
