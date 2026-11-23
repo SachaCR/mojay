@@ -6,6 +6,7 @@ mod common;
 
 use std::collections::BTreeSet;
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -15,6 +16,11 @@ use mojay::{Consumer, ConsumerConfig, ConsumerRecord, Db, FsyncPolicy, Rebalance
 const SHORT: Duration = Duration::from_millis(20);
 const MESSAGES_PER_PARTITION: u64 = 100;
 const PROCESS_TEST_MESSAGES: u64 = 2000;
+/// The longest a child process may wait for anything, so that a failing
+/// multi-process test fails instead of hanging.
+const CHILD_TIMEOUT: Duration = Duration::from_secs(30);
+/// Printed by a child member once its group is balanced.
+const READY: &str = "READY";
 
 /// (partition, offset): the identity of a message within a topic.
 type Seen = BTreeSet<(u32, u64)>;
@@ -31,6 +37,11 @@ fn auto_commit() -> ConsumerConfig {
 fn topic_with_messages(db: &Db, partitions: u32, per_partition: u64) {
     db.create_topic("stream", config(partitions, 1 << 20, FsyncPolicy::Never))
         .unwrap();
+    send_messages(db, partitions, per_partition);
+}
+
+/// Send `per_partition` messages to each of the `partitions` partitions of "stream".
+fn send_messages(db: &Db, partitions: u32, per_partition: u64) {
     let mut producer = db.producer("stream").unwrap();
     for partition in 0..partitions {
         for i in 0..per_partition {
@@ -105,15 +116,29 @@ fn child_process() {
         return;
     };
     match scenario.as_str() {
-        // Wait for a second member, read while printing each message, and
-        // stop after one second without receiving anything.
-        "member_until_idle" => {
+        // Wait until the group of two members is balanced and print READY,
+        // then read while printing each message, and stop after one second
+        // without receiving anything. The parent writes the messages only
+        // once both members are READY: otherwise the first member, alone
+        // with every partition until its next rebalance, may read everything
+        // and leave nothing to the second.
+        "balanced_member_until_idle" => {
+            let deadline = Instant::now() + CHILD_TIMEOUT;
             let mut consumer = db.consumer("g", &["stream"], auto_commit()).unwrap();
             let dir = Path::new(&std::env::var("MOJAY_TEST_CHILD_DIR").unwrap()).to_path_buf();
-            wait_until(Duration::from_secs(30), || member_files(&dir) >= 2);
+            wait_until(CHILD_TIMEOUT, || member_files(&dir) >= 2);
+            // Rebalancing runs inside `poll`: the topic is still empty, so
+            // these polls only take part in the group.
+            while consumer.assignment().len() != 2 {
+                assert!(Instant::now() < deadline, "the group never balanced");
+                consumer.poll(SHORT).unwrap();
+            }
+            println!("{READY}");
             let mut idle_since = Instant::now();
             let mut received_any = false;
             while !received_any || idle_since.elapsed() < Duration::from_secs(1) {
+                // Fail rather than wait forever for messages that never come.
+                assert!(Instant::now() < deadline, "no message received");
                 let records = consumer.poll(Duration::from_millis(100)).unwrap();
                 if !records.is_empty() {
                     received_any = true;
@@ -283,19 +308,39 @@ fn manual_commit_member_replays_revoked_partitions_from_last_commit() {
 #[test]
 fn two_processes_share_the_work_without_overlap() {
     let (dir, db) = new_db();
-    topic_with_messages(&db, 4, PROCESS_TEST_MESSAGES / 4);
+    topic_with_messages(&db, 4, 0);
 
-    let first = spawn_child("member_until_idle", dir.path());
-    wait_until(Duration::from_secs(30), || member_files(dir.path()) >= 1);
-    let second = spawn_child("member_until_idle", dir.path());
+    let mut first = spawn_child("balanced_member_until_idle", dir.path());
+    wait_until(CHILD_TIMEOUT, || member_files(dir.path()) >= 1);
+    let mut second = spawn_child("balanced_member_until_idle", dir.path());
+    let mut outputs = [&mut first, &mut second].map(|child| {
+        BufReader::new(child.stdout.take().unwrap())
+            .lines()
+            .map(Result::unwrap)
+    });
+    // Each child fails on its own after CHILD_TIMEOUT, closing its output:
+    // this cannot wait forever.
+    for lines in &mut outputs {
+        // The test harness output may precede READY on its line.
+        assert!(
+            lines.any(|line| line.contains(READY)),
+            "a member exited before the group was balanced"
+        );
+    }
+    send_messages(&db, 4, PROCESS_TEST_MESSAGES / 4);
 
     let mut seen = Seen::new();
-    for child in [first, second] {
+    for (child, lines) in [first, second].into_iter().zip(outputs) {
+        let stdout: Vec<String> = lines.collect();
         let output = child.wait_with_output().unwrap();
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(output.status.success(), "a member failed:\n{stdout}");
+        assert!(
+            output.status.success(),
+            "a member failed:\n{}\n{}",
+            stdout.join("\n"),
+            String::from_utf8_lossy(&output.stderr)
+        );
         let mut own = 0;
-        for line in stdout.lines() {
+        for line in &stdout {
             // The test harness output may precede the first line.
             let Some(rec) = line.split("REC ").nth(1) else {
                 continue;
