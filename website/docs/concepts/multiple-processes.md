@@ -64,7 +64,7 @@ repairs each partition before writing.
 `flock` locks only coordinate processes that share one kernel and one local file
 system. This sets the limits of Mojay:
 
-:::warning Not on network or synced folders
+:::warning[Not on network or synced folders]
 Do not put a data folder on a network file system (NFS, SMB) or in a folder
 synchronized by a cloud service. `flock` is not reliable there, and two
 processes could both believe they own the same partition. SQLite has the same

@@ -16,7 +16,7 @@ npm install mojay
 
 You need Node.js 18 or later, on macOS or Linux (x64 or arm64).
 
-:::note Before the first release
+:::note[Before the first release]
 Until the package is published on npm, build it from the repository. You need
 Rust (`rustup`) installed:
 
@@ -145,7 +145,7 @@ A message is `{ key?, value?, headers?, partition?, timestamp? }`:
 - `timestamp` is in milliseconds since the epoch, and defaults to the time of
   sending.
 
-:::tip Throughput
+:::tip[Throughput]
 The binding sends one message per `send` call. With `fsync: 'always'`, each
 call waits for the disk, which limits a producer to a few hundred messages per
 second on a typical laptop SSD. If you need more, create the topic with an

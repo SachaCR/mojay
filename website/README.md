@@ -35,5 +35,9 @@ TypeScript.
 | `src/css/custom.css` | Colors and fonts. |
 | `static/` | Logo, social card, `CNAME` (mojay.dev), `robots.txt`. |
 
+Callouts take their title in brackets: `:::warning[Title]`. The old form
+`:::warning Title` renders as plain text without failing the build, so the
+workflow checks for it.
+
 When Mojay's behavior or disk format changes, update the matching page here,
 in the same commit as `docs/conception.md`.

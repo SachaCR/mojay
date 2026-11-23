@@ -39,6 +39,15 @@ jobs:
       - name: Type-check
         run: pnpm typecheck
 
+      # `:::warning Title` (with a space) is the old syntax: it renders as
+      # plain text, without failing the build. The title goes in brackets.
+      - name: Callout titles use brackets
+        run: |
+          if grep -rnE '^:::[a-z]+ +[^ ]' docs blog; then
+            echo "::error::Write callout titles as :::warning[Title]"
+            exit 1
+          fi
+
       - name: Build
         run: pnpm build
 

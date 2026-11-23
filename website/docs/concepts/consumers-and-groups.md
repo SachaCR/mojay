@@ -83,7 +83,7 @@ completes in well under a second. This happens when:
 What happens to the position of a partition that changes hands depends on the
 commit mode: see [Offsets and commits](./offsets-and-commits.md#handing-over-a-partition).
 
-:::warning A member that stops polling keeps its partitions
+:::warning[A member that stops polling keeps its partitions]
 Rebalancing runs inside `poll`. A member that is alive but no longer calls
 `poll` keeps its partitions, and nobody else reads them, for as long as its
 process lives. There is no timeout. Close consumers you no longer use.
