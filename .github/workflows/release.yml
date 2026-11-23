@@ -1,113 +1,142 @@
 name: Release
 
-# Publishes a version (see RELEASING.md).
+# Releases a new version from a button: Actions → Release → Run workflow, from
+# `main` (see RELEASING.md). In order:
 #
-# - Pushing a tag `v<version>` publishes the crates `mojay` and `mojay-cli` to
-#   crates.io, the `@mojay-dev/node` npm package with prebuilt binaries for
-#   every supported platform, and creates the GitHub release from
-#   CHANGELOG.md.
-# - Running it by hand (Actions → Release → Run workflow) does, by `mode`:
-#   - `rehearsal` (default): every check and build, with dry runs of both
-#     publishes. Nothing is published.
-#   - `crates` or `npm`: publishes only that registry, for the tag selected in
-#     "Use workflow from" (for example the npm package of a version whose
-#     crates are already out).
+# 1. prepare: computes the version (patch, minor or major bump) and writes it
+#    everywhere, and turns the "Unreleased" section of CHANGELOG.md into the
+#    section of that version. Nothing is committed yet: the change travels to
+#    the next jobs as a patch.
+# 2. checks and node-binaries: test the release on Linux and macOS, check the
+#    crates package, and build and test the four Node.js binaries.
+# 3. tag: only once everything passed, commits "Release <version>" on `main`,
+#    tags it `v<version>` and pushes both.
+# 4. crates, npm, github-release: publish the tagged code. npm uses trusted
+#    publishing (no token): its trusted publisher is this file, `release.yml`.
 #
-# The npm package is published only if its four binaries build and pass their
-# tests. Each publish step skips a version that is already published, so a
-# failed run can be re-run safely.
+# With "dry run", every step runs but nothing is pushed or published.
+#
+# The release type "none" releases the version already written on `main`: it
+# finishes a run that pushed its tag but failed to publish. Each publish step
+# skips what is already published, so re-running is always safe.
 
 on:
-  push:
-    tags: ["v*"]
   workflow_dispatch:
     inputs:
-      mode:
-        description: "rehearsal: dry runs only. crates / npm: publish that registry for the selected tag."
+      release_type:
+        description: "Version bump (none: release the version already on main)"
         type: choice
-        options: [rehearsal, crates, npm]
-        default: rehearsal
+        options: [patch, minor, major, none]
+        default: patch
+      dry_run:
+        description: "Dry run: build, test and check everything, push and publish nothing"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
+# One release at a time; never cancel one halfway through its publishes.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 env:
   CARGO_TERM_COLOR: always
-  # `tag` for a tag push, otherwise the mode chosen by hand.
-  MODE: ${{ github.event_name == 'push' && 'tag' || inputs.mode }}
+  DRY_RUN: ${{ inputs.dry_run }}
 
 jobs:
-  check-version:
-    name: Check versions
+  prepare:
+    name: Prepare the version
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
-      crates: ${{ steps.plan.outputs.crates }}
-      npm: ${{ steps.plan.outputs.npm }}
+      tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The tags, to check the new one does not exist yet.
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
       - id: version
-        name: Tag, crates and npm package must agree
+        name: Write the version and the changelog
+        env:
+          RELEASE_TYPE: ${{ inputs.release_type }}
+        run: |
+          version=$(.github/scripts/prepare-release.sh "$RELEASE_TYPE" "$(date -u +%F)" | tail -n 1)
+          tag="v$version"
+          echo "Release $version ($RELEASE_TYPE)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Crates, npm package and changelog agree
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           lib=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "mojay") | .version')
           cli=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "mojay-cli") | .version')
           npm=$(jq -r .version bindings/node/package.json)
-          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
-            version="${GITHUB_REF_NAME#v}"
-          elif [ "$MODE" = "rehearsal" ]; then
-            # A rehearsal may run from a branch: it checks the version of the code.
-            version="$lib"
-          else
-            echo "::error::Publishing by hand must run from a tag (Use workflow from: v<version>)"
+          echo "release $VERSION: mojay $lib, mojay-cli $cli, npm $npm"
+          if [ "$lib" != "$VERSION" ] || [ "$cli" != "$VERSION" ] || [ "$npm" != "$VERSION" ]; then
+            echo "::error::The versions of the crates and the npm package differ"
             exit 1
           fi
-          echo "version $version, mojay $lib, mojay-cli $cli, npm $npm"
-          if [ "$lib" != "$version" ] || [ "$cli" != "$version" ] || [ "$npm" != "$version" ]; then
-            echo "::error::The tag does not match the versions in Cargo.toml and package.json"
-            exit 1
-          fi
-          grep -q "^## \[$version\]" CHANGELOG.md || { echo "::error::CHANGELOG.md has no section for $version"; exit 1; }
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-      - id: plan
-        name: What this run publishes
-        run: |
-          case "$MODE" in
-            tag | rehearsal) crates=true; npm=true ;;
-            crates) crates=true; npm=false ;;
-            npm) crates=false; npm=true ;;
-          esac
-          echo "mode $MODE: crates $crates, npm $npm"
-          echo "crates=$crates" >> "$GITHUB_OUTPUT"
-          echo "npm=$npm" >> "$GITHUB_OUTPUT"
-
-  crates:
-    name: Publish to crates.io
-    needs: check-version
-    if: needs.check-version.outputs.crates == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Publish mojay and mojay-cli
+          grep -q "^## \[$VERSION\] - " CHANGELOG.md || { echo "::error::CHANGELOG.md has no section for $VERSION"; exit 1; }
+      - name: The tag is new, or already on this commit
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-          VERSION: ${{ needs.check-version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
-          if [ "$MODE" = "rehearsal" ]; then
-            cargo publish --dry-run -p mojay -p mojay-cli
+          if ! git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
             exit 0
           fi
-          status=$(curl -s -o /dev/null -w "%{http_code}" -A "mojay-release" "https://crates.io/api/v1/crates/mojay/$VERSION")
-          if [ "$status" = "200" ]; then
-            echo "mojay $VERSION is already on crates.io: skipping."
-          else
-            cargo publish -p mojay -p mojay-cli
+          # Only "none" can meet an existing tag: a bump always makes a new
+          # version. The run then finishes the release of that tag, which must
+          # be the code tested here.
+          if [ "$(git rev-parse "$TAG^{commit}")" != "$(git rev-parse HEAD)" ]; then
+            echo "::error::$TAG already exists on another commit: release a new version instead"
+            exit 1
           fi
+          echo "$TAG is already on this commit: finishing its release."
+      - name: Save the changes as a patch
+        run: |
+          git diff --binary > release.patch
+          git diff --stat
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-patch
+          path: release.patch
+          # An empty patch ("none") is still a patch.
+          if-no-files-found: error
+
+  checks:
+    name: Tests (${{ matrix.os }})
+    needs: prepare
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-patch
+      - name: Apply the release
+        run: if [ -s release.patch ]; then git apply --index release.patch; fi && rm release.patch
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace
+      - name: Check the crates package
+        if: runner.os == 'Linux'
+        # --allow-dirty: the release is not committed yet.
+        run: cargo publish --dry-run --allow-dirty -p mojay -p mojay-cli
 
   node-binaries:
     name: Node.js binary (${{ matrix.target }})
-    needs: check-version
-    if: needs.check-version.outputs.npm == 'true'
+    needs: prepare
     strategy:
       fail-fast: true
       matrix:
@@ -132,6 +161,12 @@ jobs:
         working-directory: bindings/node
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-patch
+      - name: Apply the release
+        working-directory: .
+        run: if [ -s release.patch ]; then git apply --index release.patch; fi && rm release.patch
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -146,6 +181,10 @@ jobs:
       - run: npm ci
       - name: Build
         run: npx napi build --platform --release --target ${{ matrix.target }}
+      - name: The loader and the types match the committed ones
+        # `napi build` regenerates them: a difference means the committed files
+        # (or the version written by prepare-release.sh) are stale.
+        run: git diff --exit-code -- index.js index.d.ts
       - name: Test
         if: matrix.test
         run: npm test
@@ -155,9 +194,85 @@ jobs:
           path: bindings/node/mojay.*.node
           if-no-files-found: error
 
+  tag:
+    name: Commit and tag
+    needs: [prepare, checks, node-binaries]
+    runs-on: ubuntu-latest
+    permissions:
+      # Push the release commit and its tag.
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-patch
+          path: ${{ runner.temp }}
+      - name: Commit, tag and push
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          PATCH: ${{ runner.temp }}/release.patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ -s "$PATCH" ]; then
+            git apply "$PATCH"
+            git commit -am "Release $VERSION"
+          fi
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "$TAG already exists on this commit (checked by prepare)."
+          else
+            # Annotated: it records who released, and when.
+            git tag -a "$TAG" -m "Mojay $VERSION"
+          fi
+          git log --oneline -1 --decorate
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "Dry run: main and $TAG are not pushed."
+            exit 0
+          fi
+          # Fails if main moved since the run started: the release would not
+          # contain what was tested. Run it again from the new main.
+          git push --atomic origin "HEAD:refs/heads/main" "refs/tags/$TAG"
+
+  crates:
+    name: Publish to crates.io
+    needs: [prepare, tag]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # In a dry run, the tag exists only in the tag job: test the same
+          # code by applying the release again.
+          ref: ${{ inputs.dry_run && github.sha || needs.prepare.outputs.tag }}
+      - uses: actions/download-artifact@v8
+        if: inputs.dry_run
+        with:
+          name: release-patch
+      - name: Apply the release
+        if: inputs.dry_run
+        run: if [ -s release.patch ]; then git apply --index release.patch; fi && rm release.patch
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Publish mojay and mojay-cli
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            cargo publish --dry-run --allow-dirty -p mojay -p mojay-cli
+            exit 0
+          fi
+          status=$(curl -s -o /dev/null -w "%{http_code}" -A "mojay-release" "https://crates.io/api/v1/crates/mojay/$VERSION")
+          if [ "$status" = "200" ]; then
+            echo "mojay $VERSION is already on crates.io: skipping."
+          else
+            cargo publish -p mojay -p mojay-cli
+          fi
+
   npm:
     name: Publish to npm
-    needs: [check-version, node-binaries]
+    needs: [prepare, node-binaries, tag]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -170,6 +285,16 @@ jobs:
         working-directory: bindings/node
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.dry_run && github.sha || needs.prepare.outputs.tag }}
+      - uses: actions/download-artifact@v8
+        if: inputs.dry_run
+        with:
+          name: release-patch
+      - name: Apply the release
+        if: inputs.dry_run
+        working-directory: .
+        run: if [ -s release.patch ]; then git apply --index release.patch; fi && rm release.patch
       - uses: actions/setup-node@v7
         with:
           node-version: 24
@@ -199,37 +324,41 @@ jobs:
           ' "$(npm --version)"
       - name: Publish
         env:
-          VERSION: ${{ needs.check-version.outputs.version }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          if [ "$MODE" = "rehearsal" ]; then
+          name=$(jq -r .name package.json)
+          if [ "$DRY_RUN" = "true" ]; then
             npm publish --dry-run --access public
-          elif npm view "$(jq -r .name package.json)@$VERSION" version >/dev/null 2>&1; then
-            echo "$(jq -r .name package.json)@$VERSION is already on npm: skipping."
+          elif npm view "$name@$VERSION" version >/dev/null 2>&1; then
+            echo "$name@$VERSION is already on npm: skipping."
           else
             npm publish --provenance --access public
           fi
 
   github-release:
     name: GitHub release
-    needs: [check-version, crates]
-    if: github.event_name == 'push'
+    needs: [prepare, crates, npm]
+    if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
       - name: Create the release from CHANGELOG.md
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.check-version.outputs.version }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           # The section of this version: from its heading to the next one.
           awk -v v="$VERSION" '
             /^## \[/ { if (found) exit; if (index($0, "## [" v "]") == 1) { found = 1; next } }
             found { print }
           ' CHANGELOG.md > notes.md
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            echo "Release $GITHUB_REF_NAME already exists: skipping."
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists: skipping."
           else
-            gh release create "$GITHUB_REF_NAME" --title "Mojay $VERSION" --notes-file notes.md
+            gh release create "$TAG" --title "Mojay $VERSION" --notes-file notes.md --verify-tag
           fi

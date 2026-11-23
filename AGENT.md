@@ -141,8 +141,9 @@ verrous ou au `mmap`, lancer aussi les tests sous Linux avec Docker :
 docker run --rm -v "$PWD":/src:ro -v mojay-linux-target:/target -e CARGO_TARGET_DIR=/target -w /src rust:1-bookworm cargo test --workspace
 ```
 
-La publication (crates.io, npm, release GitHub) part d'un tag `v<version>` :
-voir `RELEASING.md`, et noter chaque changement visible dans `CHANGELOG.md`.
+La publication (crates.io, npm, release GitHub) se lance depuis le workflow
+Release, dans l'onglet Actions : voir `RELEASING.md`. Chaque changement visible
+se note dans la section `Unreleased` de `CHANGELOG.md`, dans le même commit.
 
 Les vérifications doivent passer sans avertissement. Les dépendances restent minimales :
 chaque nouvelle crate se justifie (maintenance, licence, taille).

@@ -1,9 +1,9 @@
 # Releasing Mojay
 
-A release publishes, from one tag, the crates `mojay` and `mojay-cli` to
-crates.io, the `@mojay-dev/node` package to npm (with prebuilt binaries for
-macOS and Linux), and a GitHub release. `.github/workflows/release.yml` does it
-when a tag `v<version>` is pushed.
+A release publishes the crates `mojay` and `mojay-cli` to crates.io, the
+`@mojay-dev/node` package to npm (with prebuilt binaries for macOS and Linux),
+and a GitHub release, all with the same version. It starts from a button:
+the **Release** workflow (`.github/workflows/release.yml`) does the rest.
 
 A published version can never be replaced or reused, on crates.io or on npm.
 
@@ -28,44 +28,48 @@ crates.io supports trusted publishing too (crate settings → Trusted
 Publishing). The crates job would then need `id-token: write` and the
 `rust-lang/crates-io-auth-action` step instead of `CARGO_REGISTRY_TOKEN`.
 
-## Steps
+## As you work
 
-1. Make sure the CI is green on `main`. To check the release itself without
-   publishing anything, run the **Release** workflow by hand (Actions →
-   Release → Run workflow): it builds and tests every binary and does a dry
-   run of both publishes.
-2. Set the new version everywhere, for example `0.2.0`:
-   - `version` in `Cargo.toml` and `cli/Cargo.toml`, and the `version` of the
-     `mojay` dependency in `cli/Cargo.toml`;
-   - the npm package: from `bindings/node`, `npm version 0.2.0 --no-git-tag-version`
-     (updates `package.json` and `package-lock.json`).
-3. In `CHANGELOG.md`, turn the section into `## [0.2.0] - <date>` and add its
-   link at the bottom. The release notes are taken from this section.
-4. Run the checks of `AGENT.md` (section 5), then commit:
-   `Release 0.2.0`.
-5. Tag and push:
+Note each visible change in `CHANGELOG.md`, under `## [Unreleased]`, in the
+same commit as the change. The release turns that section into the section of
+the new version, and its text becomes the notes of the GitHub release. A
+release with an empty "Unreleased" section is refused.
 
-   ```bash
-   git tag -a v0.2.0 -m "Mojay 0.2.0"
-   ```
+## Releasing
 
-   ```bash
-   git push origin main v0.2.0
-   ```
+1. Make sure the CI is green on `main`.
+2. Actions → Release → Run workflow, from the branch `main`, and choose:
+   - the **release type**: `patch` (0.1.0 → 0.1.1), `minor` (0.1.0 → 0.2.0)
+     or `major`. Until 1.0, a change of API or disk format is a `minor`.
+   - **dry run**, to rehearse: every step runs, nothing is pushed or
+     published.
+3. Follow the run. The workflow:
+   1. writes the new version everywhere (`.github/scripts/prepare-release.sh`:
+      the three Cargo manifests, `Cargo.lock`, `package.json`,
+      `package-lock.json` and the napi-rs loader `index.js`), and turns
+      "Unreleased" into `## [<version>] - <date>` in the changelog;
+   2. runs the tests on Linux and macOS, checks the crates package, and
+      builds and tests the four Node.js binaries;
+   3. only then commits `Release <version>` on `main`, tags it
+      `v<version>` and pushes both;
+   4. publishes the crates and the npm package, then the GitHub release.
 
-6. Follow the **Release** workflow in the Actions tab. It checks that the tag,
-   the crates and the npm package have the same version and that the changelog
-   has its section, builds and tests the Node.js binaries on every platform,
-   then publishes. If a step fails after something was published, fix the
-   cause and re-run the failed jobs: versions already published are skipped.
+To see locally what step 1 changes, run the script on a clean tree, then
+discard its changes:
 
-## Publishing one registry later
+```bash
+.github/scripts/prepare-release.sh patch "$(date +%F)" && git diff --stat
+```
 
-To publish only npm (or only crates.io) for a version that is already tagged,
-for example the npm package of a version whose crates are already out:
-Actions → Release → Run workflow, choose the tag (for example `v0.2.0`) in
-"Use workflow from" and the mode `npm`. The npm package is then built from the
-tagged code, like the crates were.
+## When a run fails
+
+- **Before the tag** (tests, builds): nothing was pushed or published. Fix the
+  cause on `main` and run the release again.
+- **The push is refused**: `main` moved during the run, so the release would
+  not contain what was tested. Run it again.
+- **After the tag** (a publish failed): re-run the failed jobs, or run the
+  workflow again with the release type `none`, which releases the version
+  already on `main`. Every publish step skips what is already published.
 
 ## How 0.1.0 reached npm
 

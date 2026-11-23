@@ -6,6 +6,17 @@ All notable changes to Mojay are listed here. The format follows
 may change the API or the disk format; a changed disk format is refused with a
 clear error, never misread.
 
+Note each visible change under "Unreleased" as it lands: the Release workflow
+turns that section into the section of the new version.
+
+## [Unreleased]
+
+### Node.js (`@mojay-dev/node` npm package)
+
+- Published by the release workflow through npm trusted publishing: each
+  version now carries a provenance attestation linking it to the GitHub
+  Actions run and the commit it was built from.
+
 ## [0.1.0] - 2026-11-23
 
 The first version: Kafka's model in a local folder, with no server.
