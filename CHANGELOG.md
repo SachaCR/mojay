@@ -6,7 +6,7 @@ All notable changes to Mojay are listed here. The format follows
 may change the API or the disk format; a changed disk format is refused with a
 clear error, never misread.
 
-## [0.1.0] - Unreleased
+## [0.1.0] - 2026-11-23
 
 The first version: Kafka's model in a local folder, with no server.
 
@@ -33,6 +33,8 @@ The first version: Kafka's model in a local folder, with no server.
 - `mojay create-topic`, `topics`, `describe`, `produce`, `tail` and `dump`.
 
 ### Node.js (`mojay` npm package)
+
+Not yet on npm: it will be published separately, from this same version.
 
 - The library from Node.js, with Promises and TypeScript definitions; each
   producer and consumer runs on its own thread.

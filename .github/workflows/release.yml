@@ -1,27 +1,40 @@
 name: Release
 
-# Publishes a version when a tag `v<version>` is pushed (see RELEASING.md):
-# the crates `mojay` and `mojay-cli` to crates.io, the `mojay` package to npm
-# with prebuilt binaries for every supported platform, and a GitHub release.
+# Publishes a version (see RELEASING.md).
 #
-# Nothing is published unless every binary builds and its tests pass. Each
-# publish step skips a version that is already published, so a failed run
-# can be re-run safely.
+# - Pushing a tag `v<version>` publishes the crates `mojay` and `mojay-cli` to
+#   crates.io and creates the GitHub release from CHANGELOG.md. It also
+#   publishes the `mojay` npm package, with prebuilt binaries for every
+#   supported platform, when the repository variable `PUBLISH_NPM` is `true`.
+# - Running it by hand (Actions → Release → Run workflow) does, by `mode`:
+#   - `rehearsal` (default): every check and build, with dry runs of both
+#     publishes. Nothing is published.
+#   - `crates` or `npm`: publishes only that registry, for the tag selected in
+#     "Use workflow from" (for example the npm package of a version whose
+#     crates are already out).
 #
-# Run by hand (Actions → Release → Run workflow), it is a rehearsal: same
-# checks and builds, `cargo publish --dry-run` and `npm publish --dry-run`,
-# no GitHub release. Nothing is published.
+# The npm package is published only if its four binaries build and pass their
+# tests. Each publish step skips a version that is already published, so a
+# failed run can be re-run safely.
 
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      mode:
+        description: "rehearsal: dry runs only. crates / npm: publish that registry for the selected tag."
+        type: choice
+        options: [rehearsal, crates, npm]
+        default: rehearsal
 
 permissions:
   contents: read
 
 env:
   CARGO_TERM_COLOR: always
+  # `tag` for a tag push, otherwise the mode chosen by hand.
+  MODE: ${{ github.event_name == 'push' && 'tag' || inputs.mode }}
 
 jobs:
   check-version:
@@ -29,6 +42,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      crates: ${{ steps.plan.outputs.crates }}
+      npm: ${{ steps.plan.outputs.npm }}
     steps:
       - uses: actions/checkout@v7
       - id: version
@@ -37,19 +52,65 @@ jobs:
           lib=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "mojay") | .version')
           cli=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "mojay-cli") | .version')
           npm=$(jq -r .version bindings/node/package.json)
-          # A rehearsal has no tag: it checks the version of the code.
-          if [ "$GITHUB_REF_TYPE" = "tag" ]; then version="${GITHUB_REF_NAME#v}"; else version="$lib"; fi
-          echo "tag $version, mojay $lib, mojay-cli $cli, npm $npm"
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+          elif [ "$MODE" = "rehearsal" ]; then
+            # A rehearsal may run from a branch: it checks the version of the code.
+            version="$lib"
+          else
+            echo "::error::Publishing by hand must run from a tag (Use workflow from: v<version>)"
+            exit 1
+          fi
+          echo "version $version, mojay $lib, mojay-cli $cli, npm $npm"
           if [ "$lib" != "$version" ] || [ "$cli" != "$version" ] || [ "$npm" != "$version" ]; then
             echo "::error::The tag does not match the versions in Cargo.toml and package.json"
             exit 1
           fi
           grep -q "^## \[$version\]" CHANGELOG.md || { echo "::error::CHANGELOG.md has no section for $version"; exit 1; }
           echo "version=$version" >> "$GITHUB_OUTPUT"
+      - id: plan
+        name: What this run publishes
+        env:
+          PUBLISH_NPM: ${{ vars.PUBLISH_NPM }}
+        run: |
+          case "$MODE" in
+            tag) crates=true; npm=$([ "$PUBLISH_NPM" = "true" ] && echo true || echo false) ;;
+            rehearsal) crates=true; npm=true ;;
+            crates) crates=true; npm=false ;;
+            npm) crates=false; npm=true ;;
+          esac
+          echo "mode $MODE: crates $crates, npm $npm"
+          echo "crates=$crates" >> "$GITHUB_OUTPUT"
+          echo "npm=$npm" >> "$GITHUB_OUTPUT"
+
+  crates:
+    name: Publish to crates.io
+    needs: check-version
+    if: needs.check-version.outputs.crates == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Publish mojay and mojay-cli
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          if [ "$MODE" = "rehearsal" ]; then
+            cargo publish --dry-run -p mojay -p mojay-cli
+            exit 0
+          fi
+          status=$(curl -s -o /dev/null -w "%{http_code}" -A "mojay-release" "https://crates.io/api/v1/crates/mojay/$VERSION")
+          if [ "$status" = "200" ]; then
+            echo "mojay $VERSION is already on crates.io: skipping."
+          else
+            cargo publish -p mojay -p mojay-cli
+          fi
 
   node-binaries:
     name: Node.js binary (${{ matrix.target }})
     needs: check-version
+    if: needs.check-version.outputs.npm == 'true'
     strategy:
       fail-fast: true
       matrix:
@@ -97,27 +158,6 @@ jobs:
           path: bindings/node/mojay.*.node
           if-no-files-found: error
 
-  crates:
-    name: Publish to crates.io
-    needs: [check-version, node-binaries]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Publish mojay and mojay-cli
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-          VERSION: ${{ needs.check-version.outputs.version }}
-        run: |
-          status=$(curl -s -o /dev/null -w "%{http_code}" -A "mojay-release" "https://crates.io/api/v1/crates/mojay/$VERSION")
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
-            cargo publish --dry-run -p mojay -p mojay-cli
-          elif [ "$status" = "200" ]; then
-            echo "mojay $VERSION is already on crates.io: skipping."
-          else
-            cargo publish -p mojay -p mojay-cli
-          fi
-
   npm:
     name: Publish to npm
     needs: [check-version, node-binaries]
@@ -155,7 +195,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           VERSION: ${{ needs.check-version.outputs.version }}
         run: |
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+          if [ "$MODE" = "rehearsal" ]; then
             npm publish --dry-run --access public
           elif npm view "mojay@$VERSION" version >/dev/null 2>&1; then
             echo "mojay@$VERSION is already on npm: skipping."
@@ -165,18 +205,13 @@ jobs:
 
   github-release:
     name: GitHub release
-    needs: [check-version, crates, npm]
-    if: github.ref_type == 'tag'
+    needs: [check-version, crates]
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
-        with:
-          pattern: binary-*
-          path: binaries
-          merge-multiple: true
       - name: Create the release from CHANGELOG.md
         env:
           GH_TOKEN: ${{ github.token }}
@@ -190,5 +225,5 @@ jobs:
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             echo "Release $GITHUB_REF_NAME already exists: skipping."
           else
-            gh release create "$GITHUB_REF_NAME" --title "Mojay $VERSION" --notes-file notes.md binaries/*.node
+            gh release create "$GITHUB_REF_NAME" --title "Mojay $VERSION" --notes-file notes.md
           fi

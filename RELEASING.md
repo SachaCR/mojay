@@ -2,8 +2,10 @@
 
 A release publishes, from one tag, the crates `mojay` and `mojay-cli` to
 crates.io, the `mojay` package to npm (with prebuilt binaries for macOS and
-Linux), and a GitHub release. `.github/workflows/release.yml` does all of it
-when a tag `v<version>` is pushed.
+Linux), and a GitHub release. `.github/workflows/release.yml` does it when a
+tag `v<version>` is pushed. npm is included only once the repository variable
+`PUBLISH_NPM` is `true` (Settings → Secrets and variables → Actions →
+Variables); until then, a tag publishes the crates and the GitHub release.
 
 A published version can never be replaced or reused, on crates.io or on npm.
 
@@ -16,7 +18,8 @@ A published version can never be replaced or reused, on crates.io or on npm.
 2. **npm**: create an account on https://www.npmjs.com with two-factor
    authentication, then a granular access token with read and write access to
    packages (it must be allowed to publish a new package for the first
-   release). Save it as the repository secret `NPM_TOKEN`.
+   release). Save it as the repository secret `NPM_TOKEN`, and set the
+   repository variable `PUBLISH_NPM` to `true`.
 
 After the first release, both registries can use trusted publishing from
 GitHub Actions instead of long-lived tokens: crates.io (crate settings →
@@ -53,6 +56,13 @@ workflow would then need `id-token: write` on the crates job and no token.
    has its section, builds and tests the Node.js binaries on every platform,
    then publishes. If a step fails after something was published, fix the
    cause and re-run the failed jobs: versions already published are skipped.
+
+## Publishing one registry later
+
+To publish only npm (or only crates.io) for a version that is already tagged,
+for example the npm package of 0.1.0: Actions → Release → Run workflow, choose
+the tag `v0.1.0` in "Use workflow from" and the mode `npm`. The npm package is
+then built from the tagged code, like the crates were.
 
 ## After the first release
 
