@@ -2,10 +2,8 @@
 
 A release publishes, from one tag, the crates `mojay` and `mojay-cli` to
 crates.io, the `@mojay-dev/node` package to npm (with prebuilt binaries for
-macOS and Linux), and a GitHub release. `.github/workflows/release.yml` does it when a
-tag `v<version>` is pushed. npm is included only once the repository variable
-`PUBLISH_NPM` is `true` (Settings → Secrets and variables → Actions →
-Variables); until then, a tag publishes the crates and the GitHub release.
+macOS and Linux), and a GitHub release. `.github/workflows/release.yml` does it
+when a tag `v<version>` is pushed.
 
 A published version can never be replaced or reused, on crates.io or on npm.
 
@@ -18,15 +16,17 @@ A published version can never be replaced or reused, on crates.io or on npm.
 2. **npm**: create an account on https://www.npmjs.com with two-factor
    authentication, and the organization `mojay-dev` (free plan): the package
    is `@mojay-dev/node`, since npm refuses the plain name `mojay` as too close
-   to an existing package. Then create a granular access token with read and
-   write access to packages (it must be allowed to publish a new package for
-   the first release). Save it as the repository secret `NPM_TOKEN`, and set the
-   repository variable `PUBLISH_NPM` to `true`.
+   to an existing package. The workflow publishes it with trusted publishing,
+   without any token: on npmjs.com, in the settings of `@mojay-dev/node`, add a
+   Trusted Publisher of type GitHub Actions with the user `SachaCR`, the
+   repository `mojay` and the workflow `release.yml` (no environment).
 
-After the first release, both registries can use trusted publishing from
-GitHub Actions instead of long-lived tokens: crates.io (crate settings →
-Trusted Publishing) and npm (package settings → Trusted Publisher). The
-workflow would then need `id-token: write` on the crates job and no token.
+   npm can only add a trusted publisher to a package that exists: the first
+   version (0.1.0) was published by hand, see below.
+
+crates.io supports trusted publishing too (crate settings → Trusted
+Publishing). The crates job would then need `id-token: write` and the
+`rust-lang/crates-io-auth-action` step instead of `CARGO_REGISTRY_TOKEN`.
 
 ## Steps
 

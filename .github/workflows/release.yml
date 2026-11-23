@@ -3,9 +3,9 @@ name: Release
 # Publishes a version (see RELEASING.md).
 #
 # - Pushing a tag `v<version>` publishes the crates `mojay` and `mojay-cli` to
-#   crates.io and creates the GitHub release from CHANGELOG.md. It also
-#   publishes the `@mojay-dev/node` npm package, with prebuilt binaries for every
-#   supported platform, when the repository variable `PUBLISH_NPM` is `true`.
+#   crates.io, the `@mojay-dev/node` npm package with prebuilt binaries for
+#   every supported platform, and creates the GitHub release from
+#   CHANGELOG.md.
 # - Running it by hand (Actions → Release → Run workflow) does, by `mode`:
 #   - `rehearsal` (default): every check and build, with dry runs of both
 #     publishes. Nothing is published.
@@ -70,12 +70,9 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - id: plan
         name: What this run publishes
-        env:
-          PUBLISH_NPM: ${{ vars.PUBLISH_NPM }}
         run: |
           case "$MODE" in
-            tag) crates=true; npm=$([ "$PUBLISH_NPM" = "true" ] && echo true || echo false) ;;
-            rehearsal) crates=true; npm=true ;;
+            tag | rehearsal) crates=true; npm=true ;;
             crates) crates=true; npm=false ;;
             npm) crates=false; npm=true ;;
           esac
@@ -164,7 +161,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      # npm provenance: links the package to this workflow run.
+      # Trusted publishing: npm accepts this run's OIDC identity instead of a
+      # token (package settings → Trusted Publisher on npmjs.com), and links
+      # the published version to it (provenance).
       id-token: write
     defaults:
       run:
@@ -190,9 +189,16 @@ jobs:
             exit 1
           fi
           npm pack --dry-run
+      - name: npm supports trusted publishing
+        run: |
+          # Trusted publishing needs npm 11.5.1 or later.
+          node -e '
+            const [major, minor, patch] = process.argv[1].split(".").map(Number)
+            const ok = major > 11 || (major === 11 && (minor > 5 || (minor === 5 && patch >= 1)))
+            if (!ok) { console.error(`::error::npm ${process.argv[1]} is older than 11.5.1`); process.exit(1) }
+          ' "$(npm --version)"
       - name: Publish
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           VERSION: ${{ needs.check-version.outputs.version }}
         run: |
           if [ "$MODE" = "rehearsal" ]; then
