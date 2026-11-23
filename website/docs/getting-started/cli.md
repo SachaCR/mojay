@@ -17,16 +17,16 @@ mojay tail orders --follow
 
 ## Install
 
-The command line lives in the `mojay-cli` package of the repository, and builds
-a binary called `mojay`:
+The command line is the `mojay-cli` crate, which builds a binary called
+`mojay`:
 
 ```bash
-cargo install --git https://github.com/SachaCR/mojay mojay-cli
+cargo install mojay-cli
 ```
 
-From a clone of the repository, `cargo install --path cli` does the same. The
-`mojay` binary is then in `~/.cargo/bin`. Without installing it, you can also run
-it from the repository with `cargo run -p mojay-cli -- <command>`.
+The `mojay` binary is then in `~/.cargo/bin`. From a clone of the repository,
+`cargo install --path cli` installs the current version, and
+`cargo run -p mojay-cli -- <command>` runs it without installing.
 
 The command line is a separate package so that its dependencies are not
 imposed on applications that only use the library.

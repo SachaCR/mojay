@@ -13,17 +13,8 @@ and reads them back as a member of a consumer group.
 cargo add mojay
 ```
 
-Mojay targets macOS and Linux. It uses Rust edition 2024, so you need a recent
-stable toolchain.
-
-:::note Before the first release
-Until Mojay is published on crates.io, depend on the Git repository instead:
-
-```toml title="Cargo.toml"
-[dependencies]
-mojay = { git = "https://github.com/SachaCR/mojay" }
-```
-:::
+Mojay targets macOS and Linux, and needs Rust 1.88 or later. The API
+reference is on [docs.rs](https://docs.rs/mojay).
 
 ## Open a data folder
 

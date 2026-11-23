@@ -66,6 +66,6 @@ then built from the tagged code, like the crates were.
 
 ## After the first release
 
-The website and the READMEs mention how to use Mojay "before the first
-release" (from the Git repository): remove those notes once `cargo add mojay`
-and `npm install mojay` work.
+The crates are on crates.io since 0.1.0. The Node.js getting-started page
+still explains how to use the binding "before the first release" (built from
+the repository): remove that note once `npm install mojay` works.
