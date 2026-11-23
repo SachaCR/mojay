@@ -139,9 +139,7 @@ test('two members of a group share the partitions, with no duplicates', async (t
   const a = db.consumer('g', ['orders'], options)
   const b = db.consumer('g', ['orders'], options)
   const seen = new Set()
-  const deadline = Date.now() + 10_000
-  while (seen.size < 400) {
-    assert.ok(Date.now() < deadline, `${seen.size} messages read`)
+  const pollBoth = async () => {
     for (const consumer of [a, b]) {
       for (const r of await consumer.poll(20)) {
         const id = `${r.partition}:${r.offset}`
@@ -150,9 +148,24 @@ test('two members of a group share the partitions, with no duplicates', async (t
       }
     }
   }
-  const [ownedA, ownedB] = await Promise.all([a.assignment(), b.assignment()])
-  assert.equal(ownedA.length + ownedB.length, 4)
-  assert.equal(ownedA.length, 2, 'even distribution')
+  const deadline = Date.now() + 10_000
+  while (seen.size < 400) {
+    assert.ok(Date.now() < deadline, `${seen.size} messages read`)
+    await pollBoth()
+  }
+  // Rebalancing runs inside `poll`, at most every 200 ms: on a fast machine,
+  // `a` can read everything before `b` gets its share. Keep polling until the
+  // shares converge, as the Rust tests do.
+  let owned = await Promise.all([a.assignment(), b.assignment()])
+  while (owned[0].length !== 2 || owned[1].length !== 2) {
+    assert.ok(Date.now() < deadline, `assignment ${owned[0].length}/${owned[1].length}, expected 2/2`)
+    await pollBoth()
+    owned = await Promise.all([a.assignment(), b.assignment()])
+  }
+  const [ownedA, ownedB] = owned
+  const all = [...ownedA, ...ownedB].map((p) => p.partition).sort()
+  assert.deepEqual(all, [0, 1, 2, 3], 'each partition owned by exactly one member')
+  assert.equal(seen.size, 400, 'nothing read twice after the rebalance')
   const events = await b.rebalanceEvents()
   assert.ok(events.every((e) => e.kind === 'assigned'))
   await Promise.all([producer.close(), a.close(), b.close()])
@@ -242,23 +255,35 @@ test('describeTopic gives the offsets and size of each partition', async (t) => 
 test('two Node processes share a group', async (t) => {
   const { dir, db } = newDb(t)
   db.createTopic('orders', { partitions: 4, fsync: 'never' })
-  const producer = db.producer('orders')
-  for (let i = 0; i < 2000; i++) await producer.send({ value: String(i), partition: i % 4 })
-  await producer.close()
 
-  const child = () =>
-    new Promise((resolve, reject) => {
+  // Each member says "ready" once the group is balanced; the messages are
+  // written only then, so that each one gets its share whatever its speed.
+  const child = () => {
+    let markReady
+    const ready = new Promise((resolve) => (markReady = resolve))
+    const done = new Promise((resolve, reject) => {
       const p = spawn(process.execPath, [join(import.meta.dirname, 'fixtures', 'member.mjs'), dir])
       let out = ''
-      p.stdout.on('data', (chunk) => (out += chunk))
+      p.stdout.on('data', (chunk) => {
+        out += chunk
+        if (out.startsWith('ready\n')) markReady()
+      })
       p.stderr.on('data', (chunk) => process.stderr.write(chunk))
       p.on('exit', (code) => (code === 0 ? resolve(out) : reject(new Error(`code ${code}`))))
     })
-  const outputs = await Promise.all([child(), child()])
+    return { ready, done }
+  }
+  const members = [child(), child()]
+  await Promise.all(members.map((m) => m.ready))
+
+  const producer = db.producer('orders')
+  for (let i = 0; i < 2000; i++) await producer.send({ value: String(i), partition: i % 4 })
+  await producer.close()
+  const outputs = await Promise.all(members.map((m) => m.done))
 
   const seen = new Set()
   for (const output of outputs) {
-    const ids = output.split('\n').filter(Boolean)
+    const ids = output.split('\n').filter((line) => line && line !== 'ready')
     assert.ok(ids.length > 0, 'each process received a share of the work')
     for (const id of ids) {
       assert.ok(!seen.has(id), `duplicate across processes: ${id}`)

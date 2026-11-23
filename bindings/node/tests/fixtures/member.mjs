@@ -1,6 +1,8 @@
 // A member of group "g", started in its own process by the tests.
-// It waits for a second member, reads while printing "partition:offset" per
-// message, and stops after one second without receiving anything.
+// It waits until the group is balanced (two members, two partitions each) and
+// prints "ready"; the test then writes the messages. It reads while printing
+// "partition:offset" per message, and stops after one second without
+// receiving anything.
 
 import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -19,6 +21,14 @@ while (members() < 2) {
   if (Date.now() > deadline) throw new Error('the second member never arrived')
   await new Promise((resolve) => setTimeout(resolve, 10))
 }
+
+// Rebalancing runs inside `poll`: the topic is still empty, so these polls
+// only take part in the group.
+while ((await consumer.assignment()).length !== 2) {
+  if (Date.now() > deadline) throw new Error('the group never balanced')
+  await consumer.poll(50)
+}
+process.stdout.write('ready\n')
 
 let idleSince = Date.now()
 let receivedAny = false
