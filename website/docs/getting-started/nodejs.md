@@ -4,51 +4,35 @@ title: Node.js
 description: Use Mojay from Node.js, with Promises that never block the event loop.
 ---
 
-The `mojay` npm package is a native binding to the Rust library, built with
-[napi-rs](https://napi.rs). It calls the library directly: there is still no
-server or service to run. TypeScript definitions are included.
+The `@mojay-dev/node` npm package is a native binding to the Rust library,
+built with [napi-rs](https://napi.rs). It calls the library directly: there is
+still no server or service to run. TypeScript definitions are included.
 
 ## Install
 
 ```bash
-npm install mojay
+npm install @mojay-dev/node
 ```
 
-You need Node.js 18 or later, on macOS or Linux (x64 or arm64).
-
-:::note[Before the first release]
-Until the package is published on npm, build it from the repository. You need
-Rust (`rustup`) installed:
-
-```bash
-git clone https://github.com/SachaCR/mojay
-cd mojay/bindings/node
-npm install
-npm run build
-```
-
-Then install it in your project with `npm install /path/to/mojay/bindings/node`.
-`npm run build` compiles for the architecture of the Node.js that runs it. With
-an x64 Node.js on an arm64 Mac (under Rosetta), the script prints the
-`rustup target add` command to run first.
-:::
+You need Node.js 18 or later, on macOS or Linux (x64 or arm64). The package
+ships prebuilt binaries, so installing it needs neither Rust nor a compiler.
 
 ## Import it
 
 The package works with both module systems.
 
 ```js title="ESM"
-import { Db } from 'mojay'
+import { Db } from '@mojay-dev/node'
 ```
 
 ```js title="CommonJS"
-const { Db } = require('mojay')
+const { Db } = require('@mojay-dev/node')
 ```
 
 ## A first program
 
 ```js title="quickstart.mjs"
-import { Db } from 'mojay'
+import { Db } from '@mojay-dev/node'
 
 const db = Db.open('./data')
 

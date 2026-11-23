@@ -123,7 +123,7 @@ const config: Config = {
           title: "Packages",
           items: [
             { label: "crates.io", href: "https://crates.io/crates/mojay" },
-            { label: "npm", href: "https://www.npmjs.com/package/mojay" },
+            { label: "npm", href: "https://www.npmjs.com/package/@mojay-dev/node" },
             { label: "API reference (docs.rs)", href: "https://docs.rs/mojay" },
           ],
         },

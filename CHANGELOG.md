@@ -32,9 +32,10 @@ The first version: Kafka's model in a local folder, with no server.
 
 - `mojay create-topic`, `topics`, `describe`, `produce`, `tail` and `dump`.
 
-### Node.js (`mojay` npm package)
+### Node.js (`@mojay-dev/node` npm package)
 
-Not yet on npm: it will be published separately, from this same version.
+Published on npm shortly after the crates, from the same code. npm refused the
+plain name `mojay`, hence the scope.
 
 - The library from Node.js, with Promises and TypeScript definitions; each
   producer and consumer runs on its own thread.

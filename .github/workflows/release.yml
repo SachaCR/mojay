@@ -4,7 +4,7 @@ name: Release
 #
 # - Pushing a tag `v<version>` publishes the crates `mojay` and `mojay-cli` to
 #   crates.io and creates the GitHub release from CHANGELOG.md. It also
-#   publishes the `mojay` npm package, with prebuilt binaries for every
+#   publishes the `@mojay-dev/node` npm package, with prebuilt binaries for every
 #   supported platform, when the repository variable `PUBLISH_NPM` is `true`.
 # - Running it by hand (Actions → Release → Run workflow) does, by `mode`:
 #   - `rehearsal` (default): every check and build, with dry runs of both
@@ -197,8 +197,8 @@ jobs:
         run: |
           if [ "$MODE" = "rehearsal" ]; then
             npm publish --dry-run --access public
-          elif npm view "mojay@$VERSION" version >/dev/null 2>&1; then
-            echo "mojay@$VERSION is already on npm: skipping."
+          elif npm view "$(jq -r .name package.json)@$VERSION" version >/dev/null 2>&1; then
+            echo "$(jq -r .name package.json)@$VERSION is already on npm: skipping."
           else
             npm publish --provenance --access public
           fi

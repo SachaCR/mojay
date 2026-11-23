@@ -4,7 +4,7 @@ Topics, partitions and consumer groups in a local folder, with no server:
 the SQLite of Kafka, from Node.js.
 
 ```js
-const { Db } = require('mojay')
+const { Db } = require('@mojay-dev/node')
 
 const db = Db.open('./data')
 db.createTopic('orders', { partitions: 3 })
@@ -26,7 +26,7 @@ library directly, with no server or service to run. The TypeScript definitions
 ## Installation
 
 ```bash
-npm install mojay
+npm install @mojay-dev/node
 ```
 
 The package ships prebuilt binaries for macOS (arm64, x64) and Linux with

@@ -31,7 +31,7 @@ fn main() -> mojay::Result<()> {
 The same from Node.js:
 
 ```js
-import { Db } from "mojay";
+import { Db } from "@mojay-dev/node";
 
 const db = Db.open("data");
 db.createTopic("orders", { partitions: 3 });

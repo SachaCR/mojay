@@ -46,7 +46,7 @@ consumer.commit()?;
 The same in Node.js. Sends, polls and commits return Promises and run on a thread of their own for each producer and consumer, so they never block the event loop:
 
 ```ts
-import { Db } from "mojay";
+import { Db } from "@mojay-dev/node";
 
 const db = Db.open("./data");
 db.createTopic("orders", { partitions: 4 });

@@ -23,8 +23,8 @@ const INSTALL_OPTIONS = [
   },
   {
     label: "Node.js",
-    command: "npm install mojay",
-    registryUrl: "https://www.npmjs.com/package/mojay",
+    command: "npm install @mojay-dev/node",
+    registryUrl: "https://www.npmjs.com/package/@mojay-dev/node",
     registryName: "npm",
   },
 ];
@@ -153,7 +153,7 @@ fn main() -> mojay::Result<()> {
     consumer.commit()
 }`;
 
-const NODE_EXAMPLE = `import { Db } from "mojay";
+const NODE_EXAMPLE = `import { Db } from "@mojay-dev/node";
 
 const db = Db.open("data");
 db.createTopic("orders", { partitions: 3 });

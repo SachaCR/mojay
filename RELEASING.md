@@ -1,8 +1,8 @@
 # Releasing Mojay
 
 A release publishes, from one tag, the crates `mojay` and `mojay-cli` to
-crates.io, the `mojay` package to npm (with prebuilt binaries for macOS and
-Linux), and a GitHub release. `.github/workflows/release.yml` does it when a
+crates.io, the `@mojay-dev/node` package to npm (with prebuilt binaries for
+macOS and Linux), and a GitHub release. `.github/workflows/release.yml` does it when a
 tag `v<version>` is pushed. npm is included only once the repository variable
 `PUBLISH_NPM` is `true` (Settings → Secrets and variables → Actions →
 Variables); until then, a tag publishes the crates and the GitHub release.
@@ -16,9 +16,11 @@ A published version can never be replaced or reused, on crates.io or on npm.
    `publish-new` and `publish-update`. Save it as the repository secret
    `CARGO_REGISTRY_TOKEN` (GitHub → Settings → Secrets and variables → Actions).
 2. **npm**: create an account on https://www.npmjs.com with two-factor
-   authentication, then a granular access token with read and write access to
-   packages (it must be allowed to publish a new package for the first
-   release). Save it as the repository secret `NPM_TOKEN`, and set the
+   authentication, and the organization `mojay-dev` (free plan): the package
+   is `@mojay-dev/node`, since npm refuses the plain name `mojay` as too close
+   to an existing package. Then create a granular access token with read and
+   write access to packages (it must be allowed to publish a new package for
+   the first release). Save it as the repository secret `NPM_TOKEN`, and set the
    repository variable `PUBLISH_NPM` to `true`.
 
 After the first release, both registries can use trusted publishing from
@@ -60,12 +62,15 @@ workflow would then need `id-token: write` on the crates job and no token.
 ## Publishing one registry later
 
 To publish only npm (or only crates.io) for a version that is already tagged,
-for example the npm package of 0.1.0: Actions → Release → Run workflow, choose
-the tag `v0.1.0` in "Use workflow from" and the mode `npm`. The npm package is
-then built from the tagged code, like the crates were.
+for example the npm package of a version whose crates are already out:
+Actions → Release → Run workflow, choose the tag (for example `v0.2.0`) in
+"Use workflow from" and the mode `npm`. The npm package is then built from the
+tagged code, like the crates were.
 
-## After the first release
+## How 0.1.0 reached npm
 
-The crates are on crates.io since 0.1.0. The Node.js getting-started page
-still explains how to use the binding "before the first release" (built from
-the repository): remove that note once `npm install mojay` works.
+The crates and `@mojay-dev/node` are both published since 0.1.0. The npm
+package of 0.1.0 was published by hand (`npm publish --access public` from
+`bindings/node`), with the four binaries of a rehearsal run on `main`: the
+`v0.1.0` tag still had two racy Node tests, while the library and binding code
+were the same. Later versions go through the workflow.

@@ -1,5 +1,5 @@
 {
-  "name": "mojay",
+  "name": "@mojay-dev/node",
   "version": "0.1.0",
   "description": "Topics, partitions, offsets and consumer groups in a local folder, with no server: SQLite for Kafka.",
   "keywords": [
