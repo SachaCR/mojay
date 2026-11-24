@@ -10,7 +10,7 @@ rust-version = "1.88"
 
 [package]
 name = "mojay"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 description = "Topics, partitions, offsets and consumer groups in a local folder, with no server: SQLite for Kafka"
 license.workspace = true
