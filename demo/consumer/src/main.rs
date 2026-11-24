@@ -19,7 +19,6 @@ const TOPIC_WAIT: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Parser)]
 #[command(about = "Prints the messages of a Mojay topic, as a member of a group")]
-
 struct Args {
     /// The data directory, shared with the producer.
     #[arg(long, short, default_value = "./demo-data")]
