@@ -17,10 +17,13 @@ use mojay::{Db, Error, FsyncPolicy, LogConfig, Message, Retention, TopicConfig};
 use event::EventGenerator;
 
 const PARTITIONS: u32 = 3;
+
 /// The whole topic stays under about 500 MiB: the limit applies per partition.
 const TOPIC_RETENTION_BYTES: u64 = 500 * 1024 * 1024;
+
 /// Segments small enough for retention to delete at a fine grain.
 const SEGMENT_BYTES: u64 = 16 * 1024 * 1024;
+
 /// Above this rate, a summary per second replaces one line per event.
 const MAX_RATE_SHOWN_PER_EVENT: u32 = 50;
 

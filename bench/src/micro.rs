@@ -1,6 +1,7 @@
-//! The benchmark scenarios. Each one runs in its own temporary data folder,
-//! deleted when the scenario ends, and keeps memory bounded: latencies go into
-//! a fixed-size histogram, reads are done in 1 MiB batches.
+//! The micro suite: the cost of each primitive, with synthetic 100 B and
+//! 1 KiB values on a single partition. Each scenario runs in its own temporary
+//! data folder, deleted when the scenario ends, and keeps memory bounded:
+//! latencies go into a fixed-size histogram, reads are done in 1 MiB batches.
 
 use std::sync::{Arc, Barrier};
 use std::thread;
@@ -10,26 +11,11 @@ use mojay::{ConsumerConfig, Db, FsyncPolicy, LogConfig, Message, TopicConfig};
 use tempfile::TempDir;
 
 use crate::histogram::Histogram;
+use crate::measurement::{Measurement, Scenario};
 
 /// Messages written before the read scenarios: 300,000 × 100 B ≈ 30 MiB on disk.
 const PREFILL_MESSAGES: u64 = 300_000;
 const READ_BATCH_BYTES: usize = 1024 * 1024;
-
-/// The result of one scenario.
-pub struct Measurement {
-    pub name: String,
-    pub messages: u64,
-    /// Payload bytes (message values), not counting the on-disk overhead.
-    pub bytes: u64,
-    pub elapsed: Duration,
-    /// What the latency measures ("per send", "per batch", "delivery"), and its histogram.
-    pub latency: Option<(&'static str, Histogram)>,
-}
-
-pub struct Scenario {
-    pub name: String,
-    pub run: Box<dyn Fn(Duration) -> Measurement>,
-}
 
 /// Every scenario, in run order.
 pub fn all() -> Vec<Scenario> {
@@ -39,7 +25,9 @@ pub fn all() -> Vec<Scenario> {
             let name = format!("produce {policy_name}, {size} B, batch {batch}");
             scenarios.push(Scenario {
                 name: name.clone(),
-                run: Box::new(move |duration| produce(&name, policy, size, batch, duration)),
+                run: Box::new(move |settings| {
+                    vec![produce(&name, policy, size, batch, settings.duration)]
+                }),
             });
         }
     }
@@ -51,17 +39,24 @@ pub fn all() -> Vec<Scenario> {
             let name = format!("{writers} writer(s) on 1 partition, {policy_name}, 100 B");
             scenarios.push(Scenario {
                 name: name.clone(),
-                run: Box::new(move |duration| concurrent_writers(&name, policy, writers, duration)),
+                run: Box::new(move |settings| {
+                    vec![concurrent_writers(
+                        &name,
+                        policy,
+                        writers,
+                        settings.duration,
+                    )]
+                }),
             });
         }
     }
     scenarios.push(Scenario {
         name: "read raw (TopicReader), 100 B".into(),
-        run: Box::new(|_| read_raw("read raw (TopicReader), 100 B")),
+        run: Box::new(|_| vec![read_raw("read raw (TopicReader), 100 B")]),
     });
     scenarios.push(Scenario {
         name: "read with a consumer group, 100 B".into(),
-        run: Box::new(|_| read_consumer("read with a consumer group, 100 B")),
+        run: Box::new(|_| vec![read_consumer("read with a consumer group, 100 B")]),
     });
     for (policy_name, policy) in [
         ("always", FsyncPolicy::Always),
@@ -70,7 +65,7 @@ pub fn all() -> Vec<Scenario> {
         let name = format!("producer -> consumer latency, {policy_name}, 1,000 msg/s");
         scenarios.push(Scenario {
             name: name.clone(),
-            run: Box::new(move |duration| end_to_end(&name, policy, duration)),
+            run: Box::new(move |settings| vec![end_to_end(&name, policy, settings.duration)]),
         });
     }
     scenarios
@@ -127,6 +122,7 @@ fn produce(
         messages: sent,
         bytes: sent * size as u64,
         elapsed,
+        disk_bytes: None,
         latency: Some((if batch == 1 { "per send" } else { "per batch" }, latency)),
     }
 }
@@ -175,6 +171,7 @@ fn concurrent_writers(
         messages: total,
         bytes: total * 100,
         elapsed: started.elapsed(),
+        disk_bytes: None,
         latency: Some(("per send", latency)),
     }
 }
@@ -209,6 +206,7 @@ fn read_raw(name: &str) -> Measurement {
         messages: next,
         bytes,
         elapsed: started.elapsed(),
+        disk_bytes: None,
         latency: None,
     }
 }
@@ -234,6 +232,7 @@ fn read_consumer(name: &str) -> Measurement {
         messages: read,
         bytes,
         elapsed: started.elapsed(),
+        disk_bytes: None,
         latency: None,
     }
 }
@@ -282,6 +281,7 @@ fn end_to_end(name: &str, policy: FsyncPolicy, duration: Duration) -> Measuremen
         messages: received,
         bytes: received * 8,
         elapsed: started.elapsed(),
+        disk_bytes: None,
         latency: Some(("delivery", latency)),
     }
 }

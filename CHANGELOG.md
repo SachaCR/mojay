@@ -11,6 +11,22 @@ turns that section into the section of the new version.
 
 ## [Unreleased]
 
+### Library (`mojay` crate)
+
+- **Changed disk format (data folder format 2)**: a group's committed offsets
+  are now one file per topic, `groups/<g>/offsets/<topic>`, instead of one file
+  per partition. A commit costs two `fsync` per topic whatever the number of
+  partitions: with 8 partitions on macOS, delivery p99 drops from about 42 ms
+  to under 2 ms (`never`, 10,000 msg/s, auto-commit every second). A data
+  folder created by 0.1.x is refused with `Error::Corrupt`; recreate it.
+
+### Benchmarks
+
+- A realistic suite (`--suite realistic`): JSON events with keys and headers,
+  8 partitions, producer and consumer processes, backlog catch-up, soak with
+  retention, reopen after a crash. CSV output with `--csv`. A matching
+  Node.js benchmark: `npm run bench` in `bindings/node`.
+
 ## [0.1.1] - 2026-11-23
 
 ### Node.js (`@mojay-dev/node` npm package)

@@ -57,6 +57,39 @@ impl Histogram {
         }
         Duration::from_nanos(self.max)
     }
+
+    /// The largest sample, exactly.
+    pub fn max(&self) -> Duration {
+        Duration::from_nanos(self.max)
+    }
+
+    /// One line of text, so that a child process can send its histogram to
+    /// the parent: `max` then the non-empty buckets as `index:count`.
+    pub fn encode(&self) -> String {
+        let mut line = self.max.to_string();
+        for (index, count) in self.counts.iter().enumerate() {
+            if *count > 0 {
+                line.push_str(&format!(" {index}:{count}"));
+            }
+        }
+        line
+    }
+
+    /// The reverse of [`encode`](Self::encode); `None` if the line is malformed.
+    pub fn decode(line: &str) -> Option<Self> {
+        let mut words = line.split_whitespace();
+        let mut histogram = Self {
+            max: words.next()?.parse().ok()?,
+            ..Self::default()
+        };
+        for word in words {
+            let (index, count) = word.split_once(':')?;
+            let count: u64 = count.parse().ok()?;
+            *histogram.counts.get_mut(index.parse::<usize>().ok()?)? += count;
+            histogram.total += count;
+        }
+        Some(histogram)
+    }
 }
 
 fn bucket(nanos: u64) -> usize {
@@ -109,5 +142,20 @@ mod tests {
         b.record(Duration::from_millis(3));
         a.merge(&b);
         assert_eq!(a.percentile(1.0), Duration::from_millis(3));
+    }
+
+    #[test]
+    fn encode_then_decode_gives_the_same_percentiles() {
+        let mut histogram = Histogram::default();
+        for micros in [3, 50, 50, 700, 12_000] {
+            histogram.record(Duration::from_micros(micros));
+        }
+        let decoded = Histogram::decode(&histogram.encode()).expect("valid line");
+        for fraction in [0.2, 0.5, 0.99, 1.0] {
+            assert_eq!(decoded.percentile(fraction), histogram.percentile(fraction));
+        }
+        assert_eq!(decoded.max(), Duration::from_micros(12_000));
+        assert!(Histogram::decode("12 9999:1").is_none());
+        assert!(Histogram::decode("").is_none());
     }
 }

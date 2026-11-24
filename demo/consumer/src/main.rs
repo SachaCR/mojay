@@ -19,15 +19,19 @@ const TOPIC_WAIT: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Parser)]
 #[command(about = "Prints the messages of a Mojay topic, as a member of a group")]
+
 struct Args {
     /// The data directory, shared with the producer.
     #[arg(long, short, default_value = "./demo-data")]
     data: PathBuf,
+
     #[arg(long, short, default_value = "demo-events")]
     topic: String,
+
     /// The group: members of the same group share the partitions.
     #[arg(long, short, default_value = "demo-loggers")]
     group: String,
+
     /// With no committed offset, read only new messages.
     #[arg(long)]
     latest: bool,
@@ -46,9 +50,11 @@ fn main() -> ExitCode {
 fn run(args: Args) -> Result<(), Box<dyn StdError>> {
     let running = Arc::new(AtomicBool::new(true));
     let stop = Arc::clone(&running);
+
     ctrlc::set_handler(move || stop.store(false, Ordering::SeqCst))?;
 
     let me = format!("reader {}", std::process::id());
+
     let config = ConsumerConfig {
         start_from: if args.latest {
             StartFrom::Latest
@@ -60,9 +66,11 @@ fn run(args: Args) -> Result<(), Box<dyn StdError>> {
         auto_commit: Some(Duration::from_secs(1)),
         ..ConsumerConfig::default()
     };
+
     let Some(mut consumer) = join_group(&args, config, &running)? else {
         return Ok(());
     };
+
     println!(
         "[{me}] member of group \"{}\" on \"{}\". Ctrl-C to leave.",
         args.group, args.topic
@@ -70,7 +78,9 @@ fn run(args: Args) -> Result<(), Box<dyn StdError>> {
 
     while running.load(Ordering::SeqCst) {
         let records = consumer.poll(POLL_TIMEOUT)?;
+
         report_rebalance(&me, &mut consumer);
+
         for record in records {
             println!(
                 "[{me}] {}",
@@ -82,7 +92,9 @@ fn run(args: Args) -> Result<(), Box<dyn StdError>> {
     // Commits, releases the partitions and leaves the group: the other members
     // take them over on the next round, with no duplicates.
     drop(consumer);
+
     println!("\n[{me}] left: my partitions are back with the group.");
+
     Ok(())
 }
 

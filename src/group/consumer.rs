@@ -10,7 +10,7 @@ use super::config::{ConsumerConfig, StartFrom};
 use super::membership::Membership;
 use super::{GroupPaths, offsets, quota};
 use crate::error::{Error, Result};
-use crate::lock::FileLock;
+use crate::lock::{FileLock, WriteLock};
 use crate::record::{Header, Record};
 use crate::topic::TopicReader;
 
@@ -135,6 +135,9 @@ pub struct Consumer {
     events: Vec<RebalanceEvent>,
     last_rebalance: Option<Instant>,
     last_commit: Instant,
+    /// Taken while writing a commit: members of the group share the
+    /// offsets file of each topic.
+    offsets_lock: WriteLock,
     /// Declared after `owned`: partitions are released before leaving the group.
     membership: Membership,
 }
@@ -167,6 +170,7 @@ impl Consumer {
         }
 
         let paths = GroupPaths::open(groups_dir, group)?;
+        let offsets_lock = WriteLock::open(&paths.offsets_lock())?;
         let membership = Membership::join(&paths.dir)?;
         let mut consumer = Self {
             group: group.to_string(),
@@ -178,6 +182,7 @@ impl Consumer {
             events: Vec::new(),
             last_rebalance: None,
             last_commit: Instant::now(),
+            offsets_lock,
             membership,
         };
         consumer.rebalance()?;
@@ -260,25 +265,46 @@ impl Consumer {
     /// Commits the position of each owned partition: all messages
     /// already returned by `poll` are considered processed.
     ///
-    /// Each offset is written atomically and durably. Only partitions
-    /// still owned are committed: a handed-over partition
-    /// belongs to its new owner.
+    /// The offsets are written atomically and durably, with one write per
+    /// subscribed topic whatever the number of partitions. Only partitions
+    /// still owned are committed: a handed-over partition belongs to its
+    /// new owner.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::Corrupt`] if the group's offsets file is damaged.
+    /// - [`Error::Io`] on a file system error.
     pub fn commit(&mut self) -> Result<()> {
-        for i in 0..self.owned.len() {
-            self.commit_owned(i)?;
-        }
+        let pending: Vec<usize> = (0..self.owned.len())
+            .filter(|&i| self.owned[i].committed != Some(self.owned[i].position))
+            .collect();
+        self.commit_owned(&pending)?;
         self.last_commit = Instant::now();
         Ok(())
     }
 
-    fn commit_owned(&mut self, i: usize) -> Result<()> {
-        let owned = &mut self.owned[i];
-        if owned.committed != Some(owned.position) {
-            let path = self
-                .paths
-                .committed_offset(&self.topics[owned.topic].name, owned.partition);
-            offsets::write(&path, owned.position)?;
-            owned.committed = Some(owned.position);
+    /// Commits the position of `self.owned[i]` for each `i` of `indices`:
+    /// one rewrite of `offsets/<topic>` per topic involved, under the
+    /// group's offsets lock so that other members' entries are kept.
+    fn commit_owned(&mut self, indices: &[usize]) -> Result<()> {
+        if indices.is_empty() {
+            return Ok(());
+        }
+        let _guard = self.offsets_lock.acquire()?;
+        for (topic, subscription) in self.topics.iter().enumerate() {
+            let changes: Vec<(u32, u64)> = indices
+                .iter()
+                .map(|&i| &self.owned[i])
+                .filter(|owned| owned.topic == topic)
+                .map(|owned| (owned.partition, owned.position))
+                .collect();
+            if !changes.is_empty() {
+                let path = self.paths.committed_offsets(&subscription.name);
+                offsets::update(&path, subscription.reader.partitions(), &changes)?;
+            }
+        }
+        for &i in indices {
+            self.owned[i].committed = Some(self.owned[i].position);
         }
         Ok(())
     }
@@ -340,7 +366,7 @@ impl Consumer {
     fn release_last(&mut self) -> Result<()> {
         let last = self.owned.len() - 1;
         if self.config.auto_commit.is_some() {
-            self.commit_owned(last)?;
+            self.commit_owned(&[last])?;
         }
         if let Some(owned) = self.owned.pop() {
             self.events.push(RebalanceEvent::Revoked {
@@ -368,7 +394,11 @@ impl Consumer {
         else {
             return Ok(());
         };
-        let committed = offsets::read(&self.paths.committed_offset(name, partition))?;
+        let partitions = self.topics[topic].reader.partitions();
+        let committed = offsets::read(&self.paths.committed_offsets(name), partitions)?
+            .get(partition as usize)
+            .copied()
+            .flatten();
         let position = self.start_position(topic, partition, committed)?;
         self.events.push(RebalanceEvent::Assigned {
             topic: name.clone(),

@@ -49,7 +49,8 @@
   "scripts": {
     "build": "node scripts/build.mjs --release",
     "build:debug": "node scripts/build.mjs",
-    "test": "node --test 'tests/*.test.mjs'"
+    "test": "node --test 'tests/*.test.mjs'",
+    "bench": "node bench/realistic.mjs"
   },
   "devDependencies": {
     "@napi-rs/cli": "^3.10.12"

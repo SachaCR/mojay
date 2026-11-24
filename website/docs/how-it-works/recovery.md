@@ -56,7 +56,7 @@ A missing, truncated or wrong index only slows a reader down. It keeps the consi
 | --- | --- |
 | `mojay.toml`, `meta.toml` | Strict parsing: a malformed line, an unknown key or an unsupported version is `Error::Corrupt`. They are only ever replaced atomically, so a crash leaves the old or the new version. |
 | `partitions.state` | Its size must match the number of partitions, otherwise `Error::Corrupt`. Its content is rebuilt from the logs whenever a producer opens the topic. |
-| `offsets/<t>-<p>` | 12 bytes with their own CRC32C. A file of the wrong size or with a bad CRC is `Error::Corrupt`, rather than resuming from a wrong position. Replaced atomically. |
+| `offsets/<t>` | Ends with its own CRC32C. A file of the wrong size, with the wrong number of partitions or a bad CRC is `Error::Corrupt`, rather than resuming from a wrong position. Replaced atomically. |
 | A topic folder being created | Prepared under a hidden name and renamed at the end: a crash leaves a hidden folder that the topic listing ignores. |
 
 If a consumer finds a committed offset beyond the read limit (messages committed, then lost in a power loss with `fsync = never` or `interval`), it resumes at the read limit, so it skips none of the new messages written there.

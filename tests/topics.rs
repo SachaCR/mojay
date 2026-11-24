@@ -166,6 +166,18 @@ fn data_folder_from_an_unknown_format_is_refused() {
     assert!(matches!(Db::open(dir.path()), Err(Error::Corrupt { .. })));
 }
 
+/// Format 1 kept one committed offsets file per partition: such a folder is
+/// refused rather than read with the wrong layout.
+#[test]
+fn data_folder_from_format_1_is_refused() {
+    let dir = TempDir::new().unwrap();
+    Db::open(dir.path()).unwrap();
+    fs::write(dir.path().join("mojay.toml"), "format_version = 1\n").unwrap();
+    let error = Db::open(dir.path()).unwrap_err();
+    assert!(matches!(error, Error::Corrupt { .. }));
+    assert!(error.to_string().contains("version 1"), "{error}");
+}
+
 #[test]
 fn topic_from_the_single_writer_format_is_refused() {
     let (dir, db) = new_db();

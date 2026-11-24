@@ -20,7 +20,8 @@ use crate::topic::{self, Producer, TopicConfig, TopicDescription, TopicReader};
 const META_FILE: &str = "mojay.toml";
 const TOPICS_DIR: &str = "topics";
 const GROUPS_DIR: &str = "groups";
-const FORMAT_VERSION: u64 = 1;
+/// Version 2: one committed offsets file per group and topic, not per partition.
+const FORMAT_VERSION: u64 = 2;
 
 /// A Mojay data directory, the equivalent of an SQLite database file.
 ///

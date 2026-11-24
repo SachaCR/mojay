@@ -66,7 +66,7 @@ Measured on a Mac M5 with its internal SSD (see [Benchmarks](../benchmarks.md)):
 | `Always`, batches of 100 | about 27,000 messages/s |
 | `Always`, 4 writers on one partition | about 580 messages/s |
 | `Interval` or `Never`, one message per send | about 250,000 to 450,000 messages/s |
-| `Interval` or `Never`, batches of 100 | about 5 to 6 million messages/s |
+| `Interval` or `Never`, batches of 100 | about 5 to 6 million messages/s of 100 B, about 900,000/s of 1.25 KiB JSON (over 1 GiB/s) |
 
 On other machines the numbers change with the disk and the file system, but the
 shape stays the same: with `Always`, throughput is bounded by the number of

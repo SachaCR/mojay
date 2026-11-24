@@ -52,11 +52,55 @@ fn offsets(records: &[ConsumerRecord]) -> Vec<u64> {
     records.iter().map(|r| r.offset).collect()
 }
 
-/// The committed offset, read directly from disk.
+/// The committed offset, as another process reads it from disk.
 fn committed_on_disk(data: &Path, group: &str, topic: &str, partition: u32) -> Option<u64> {
-    let path = data.join(format!("groups/{group}/offsets/{topic}-{partition}"));
-    let bytes = fs::read(path).ok()?;
-    Some(u64::from_le_bytes(bytes[..8].try_into().unwrap()))
+    Db::open(data)
+        .ok()?
+        .committed_offsets(topic)
+        .ok()?
+        .into_iter()
+        .find(|c| c.group == group && c.partition == partition)
+        .map(|c| c.offset)
+}
+
+/// Partitions and messages per partition of the `wide` topic.
+const WIDE_PARTITIONS: u32 = 4;
+const WIDE_MESSAGES: u64 = 100;
+
+fn wide_topic(db: &Db) {
+    let config = config(WIDE_PARTITIONS, 1024 * 1024, FsyncPolicy::Never);
+    db.create_topic("wide", config).unwrap();
+    let mut producer = db.producer("wide").unwrap();
+    for partition in 0..WIDE_PARTITIONS {
+        for i in 0..WIDE_MESSAGES {
+            producer.send_to(partition, &message(i)).unwrap();
+        }
+    }
+}
+
+fn wide_fully_committed(db: &Db) -> bool {
+    let committed = db.committed_offsets("wide").unwrap();
+    let done = committed
+        .iter()
+        .filter(|c| c.group == "g" && c.offset == WIDE_MESSAGES)
+        .count();
+    done == WIDE_PARTITIONS as usize
+}
+
+/// As a member of `g`: reads one message at a time and commits after each
+/// poll, until the group has committed every partition of `wide`.
+fn consume_wide_committing_each_poll(db: &Db) {
+    let one_at_a_time = ConsumerConfig {
+        max_poll_bytes: 1,
+        ..manual()
+    };
+    let mut consumer = db.consumer("g", &["wide"], one_at_a_time).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !wide_fully_committed(db) {
+        assert!(Instant::now() < deadline, "timed out");
+        consumer.poll(Duration::from_millis(10)).unwrap();
+        consumer.commit().unwrap();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -87,6 +131,7 @@ fn child_process() {
                 thread::sleep(Duration::from_secs(1));
             }
         }
+        "consume_wide_committing_each_poll" => consume_wide_committing_each_poll(&db),
         other => panic!("unknown scenario: {other}"),
     }
 }
@@ -348,6 +393,30 @@ fn killed_member_hands_over_from_its_last_commit() {
     assert_eq!(offsets(&records), (committed..100).collect::<Vec<_>>());
 }
 
+/// Two processes in the same group commit their own partitions into the
+/// same offsets file at the same time: no commit may erase the other's.
+#[test]
+fn members_in_two_processes_commit_into_one_file_without_losing_entries() {
+    let (dir, db) = new_db();
+    wide_topic(&db);
+
+    let mut child = spawn_child("consume_wide_committing_each_poll", dir.path());
+    consume_wide_committing_each_poll(&db);
+    assert!(child.wait().unwrap().success());
+
+    // Both members have left: every partition stays at its last commit.
+    assert!(wide_fully_committed(&db));
+    let files: Vec<_> = fs::read_dir(dir.path().join("groups/g/offsets"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(
+        files,
+        ["wide"],
+        "one file for the topic, no temporary file left"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------
@@ -379,7 +448,7 @@ fn damaged_committed_offset_is_reported() {
     let (dir, db) = new_db();
     db.create_topic("orders", TopicConfig::default()).unwrap();
     drop(db.consumer("billing", &["orders"], manual()).unwrap());
-    fs::write(dir.path().join("groups/billing/offsets/orders-0"), b"oops").unwrap();
+    fs::write(dir.path().join("groups/billing/offsets/orders"), b"oops").unwrap();
     assert!(matches!(
         db.consumer("billing", &["orders"], manual()),
         Err(Error::Corrupt { .. })

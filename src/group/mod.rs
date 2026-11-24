@@ -4,7 +4,8 @@
 //! groups/<group>/
 //!   members/<id>.lock             # flock held = live member
 //!   partitions/<topic>-<p>.lock   # flock held = partition owned by a member
-//!   offsets/<topic>-<p>           # the group's committed offset for this partition
+//!   offsets.lock                  # flock held while a member writes a commit
+//!   offsets/<topic>               # the group's committed offsets, all partitions
 //! ```
 //!
 //! Every consumer belongs to a group; a standalone consumer is the only member
@@ -54,9 +55,11 @@ impl GroupPaths {
             .join(format!("{topic}-{partition}.lock"))
     }
 
-    fn committed_offset(&self, topic: &str, partition: u32) -> PathBuf {
-        self.dir
-            .join("offsets")
-            .join(format!("{topic}-{partition}"))
+    fn committed_offsets(&self, topic: &str) -> PathBuf {
+        self.dir.join("offsets").join(topic)
+    }
+
+    fn offsets_lock(&self) -> PathBuf {
+        self.dir.join("offsets.lock")
     }
 }

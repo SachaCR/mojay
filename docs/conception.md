@@ -43,7 +43,7 @@ Un topic est un dossier avec un sous-dossier par partition. Chaque consumer grou
 
 ```
 data/
-  mojay.toml                       # version du format (seule clé acceptée)
+  mojay.toml                       # version du format, 2 (seule clé acceptée)
   topics/<topic>/
     meta.toml                      # nombre de partitions, rétention, politique fsync
     partitions.state               # état partagé de chaque partition, en mmap
@@ -56,7 +56,8 @@ data/
   groups/<group>/                  # un consumer seul = un groupe à son nom
     members/<member_id>.lock       # verrouillé tant que le membre vit
     partitions/<topic>-<p>.lock    # verrouillé = partition possédée
-    offsets/<topic>-<p>            # offset commité du groupe
+    offsets.lock                   # flock pris le temps d'écrire un commit
+    offsets/<topic>                # offsets commités du groupe, toutes partitions
 ```
 
 Toutes les mises à jour de petits fichiers (`meta.toml`, offsets) sont atomiques : écriture d'un fichier temporaire, `fsync`, `rename`, puis `fsync` du dossier.
@@ -147,7 +148,7 @@ Un topic accepte autant de consumers que voulu, sans aucun verrou en lecture. Le
 - **Lecture** : les segments sont lus par `pread`, par gros blocs. Le `mmap` ne sert qu'au fichier `partitions.state`. Aucune lecture ne dépasse la limite de lecture. Le log est append-only, donc lire pendant une écriture est sûr.
 - **Écriture en cours** : juste après la limite de lecture, le writer peut être en train d'écrire. Un enregistrement illisible à cet endroit n'est donc pas une erreur ; avant la limite, c'en est une. Le lecteur ne répare jamais rien, et découvre seul les nouveaux segments.
 - **Consumer seul** : un groupe à un membre, qui reçoit donc toutes les partitions. Si un second processus ouvre le même nom, il rejoint le groupe et les membres vivants se répartissent les partitions (voir ci-dessous).
-- **Offsets** : `groups/<group>/offsets/<topic>-<p>` fait 12 octets : l'offset (`u64`) puis son CRC32C (`u32`). Il n'est écrit que par le détenteur du verrou de la partition. Le commit est manuel (`commit()`), ou automatique : au plus tôt à l'intervalle choisi, au début de chaque `poll` et à la fermeture. Les messages rendus par un `poll` sont alors considérés comme traités au `poll` suivant.
+- **Offsets** : `groups/<group>/offsets/<topic>` contient les offsets commités de toutes les partitions du topic : le nombre de partitions (`u32`), puis un `u64` par partition (`u64::MAX` = rien de commité), puis le CRC32C (`u32`) de tout ce qui précède, en little-endian. Une taille, un nombre de partitions ou un CRC incorrects donnent `Error::Corrupt`. L'entrée d'une partition n'est changée que par le détenteur de son verrou. Le commit est manuel (`commit()`), ou automatique : au plus tôt à l'intervalle choisi, au début de chaque `poll` et à la fermeture. Les messages rendus par un `poll` sont alors considérés comme traités au `poll` suivant.
 - **Point de départ** : sans offset commité, on part du début (`Earliest`) ou de la fin (`Latest`). Un offset commité au-delà de la limite de lecture (messages perdus avec `fsync` `Never` ou `Interval`) est ramené à la limite, pour ne sauter aucun nouveau message.
 - **Offset disparu** : si la rétention a supprimé l'offset demandé, la même politique s'applique : avec `Earliest`, le consumer repart du nouveau premier offset, sans erreur.
 - **Attente de nouveaux messages** : en V1, un polling adaptatif de la limite de lecture en mémoire partagée, de 1 ms à 50 ms selon l'activité. Le coût est négligeable, car c'est une simple lecture mémoire.
@@ -188,7 +189,9 @@ flowchart LR
 
 **Inscription sans course** : un nouveau membre crée son fichier sous un nom temporaire, le verrouille, puis le renomme dans `members/`. Le verrou suit l'inode, donc personne ne voit jamais ce fichier sans verrou et ne le prend pour celui d'un membre mort.
 
-**Offsets du groupe** : `offsets/<topic>-<p>` n'est écrit que par le détenteur du verrou de la partition, par écriture atomique : fichier temporaire, `fsync`, `rename`, puis `fsync` du dossier.
+**Offsets du groupe** : un commit prend `offsets.lock` (`flock`), relit `offsets/<topic>`, y remplace les entrées des partitions qu'il détient, et le réécrit de façon atomique : fichier temporaire, `fsync`, `rename`, puis `fsync` du dossier. Le verrou garde les entrées écrites par les autres membres ; la lecture, elle, n'en prend pas, car le `rename` est atomique. Un commit coûte ainsi deux `fsync` par topic, quel que soit le nombre de partitions détenues. Avec un fichier par partition (format 1), un commit de 8 partitions faisait 16 `fsync`, soit 40 à 70 ms sur macOS dans `poll`, une fois par seconde avec l'auto-commit : c'était l'essentiel du p99 de livraison.
+
+**Format 2** : `mojay.toml` passe à `format_version = 2` avec ce changement. Un dossier au format 1 est refusé à l'ouverture (`Error::Corrupt`), sans migration.
 
 ## API publique Rust (esquisse)
 

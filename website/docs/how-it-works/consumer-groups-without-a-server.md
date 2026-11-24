@@ -10,7 +10,8 @@ In Kafka, a group coordinator running in the broker tracks members through heart
 groups/<group>/
   members/<member_id>.lock        # flock held = live member
   partitions/<topic>-<p>.lock     # flock held = partition owned by a member
-  offsets/<topic>-<p>             # the group's committed offset
+  offsets.lock                    # flock held while a member writes a commit
+  offsets/<topic>                 # the group's committed offsets, all partitions
 ```
 
 ## A lone consumer is a group of one
@@ -74,11 +75,12 @@ The new owner always reads the committed offset **after** taking the partition's
 
 ## Committed offsets
 
-`offsets/<topic>-<p>` is 12 bytes: the offset as a `u64`, then its CRC32C as a `u32`, both little-endian. The offset stored is the next one to read.
+`offsets/<topic>` holds the group's committed offsets for every partition of the topic. In little-endian: the number of partitions as a `u32`, then one `u64` per partition (`u64::MAX` when nothing was committed there), then the CRC32C of everything before it as a `u32`. The offset stored is the next one to read.
 
-- **One writer.** Only the member holding the partition's lock writes this file, so two members never race on it.
-- **Atomic and durable.** Each commit writes a temporary file, flushes it with `fsync`, renames it over the old one, then flushes the `offsets/` folder. After a crash, the file holds the old offset or the new one, never a mix.
-- **Checked on read.** A file of the wrong size or with a bad CRC is reported as `Error::Corrupt` instead of resuming from a wrong position.
+- **One writer per entry.** Only the member holding a partition's lock changes that partition's entry. A commit takes `offsets.lock`, reads the file, replaces the entries of the partitions it holds and writes it back, so the entries written by other members are kept. Readers take no lock.
+- **One file per topic, not per partition.** A commit costs two `fsync` per topic (the file, then the folder), whatever the number of partitions it covers. With one file per partition, a member committing 8 partitions on macOS spent 40 to 70 ms in `poll` once per second, which set the p99 delivery latency.
+- **Atomic and durable.** Each commit writes a temporary file, flushes it with `fsync`, renames it over the old one, then flushes the `offsets/` folder. After a crash, the file holds the old offsets or the new ones, never a mix.
+- **Checked on read.** A file of the wrong size, with the wrong number of partitions or a bad CRC is reported as `Error::Corrupt` instead of resuming from a wrong position.
 - **Only when needed.** A partition whose position has not moved since its last commit is not written again.
 
 With automatic commit, positions are committed at most once per chosen interval, at the start of each `poll`, when a partition is handed over, and when the consumer is closed. Messages returned by a `poll` count as processed at the next `poll`.

@@ -47,8 +47,9 @@ pub(crate) fn committed_offsets(
         let paths = GroupPaths {
             dir: groups_dir.join(&group),
         };
-        for partition in 0..partitions {
-            if let Some(offset) = offsets::read(&paths.committed_offset(topic, partition))? {
+        let committed = offsets::read(&paths.committed_offsets(topic), partitions)?;
+        for (partition, offset) in (0u32..).zip(committed) {
+            if let Some(offset) = offset {
                 out.push(CommittedOffset {
                     group: group.clone(),
                     partition,

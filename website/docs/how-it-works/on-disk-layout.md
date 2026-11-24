@@ -29,7 +29,8 @@ data/
   groups/<group>/                   # a lone consumer is a group named after it
     members/<member_id>.lock        # locked for as long as the member lives
     partitions/<topic>-<p>.lock     # locked = partition owned by a member
-    offsets/<topic>-<p>             # the group's committed offset for that partition
+    offsets.lock                    # locked while a member writes a commit
+    offsets/<topic>                 # the group's committed offsets for that topic
 ```
 
 A topic is a folder with one sub-folder per partition. Each consumer group has its own folder, including the group of a lone consumer, so two groups never write the same file.
@@ -47,7 +48,8 @@ A topic is a folder with one sub-folder per partition. Each consumer group has i
 | `p<N>/<base>.idx` | Writers | The sparse index of that segment. A cache, rebuilt from the `.log` when missing or wrong. |
 | `groups/<g>/members/<id>.lock` | Each consumer | A member is alive as long as it holds the lock on its file. |
 | `groups/<g>/partitions/<t>-<p>.lock` | Consumers | A member owns a partition as long as it holds this lock. |
-| `groups/<g>/offsets/<t>-<p>` | The owner of the partition | 12 bytes: the committed offset (`u64`) and its CRC32C. |
+| `groups/<g>/offsets.lock` | Consumers | Taken with `flock` while a member rewrites an offsets file, so that it keeps the other members' entries. |
+| `groups/<g>/offsets/<t>` | Consumers, each for the partitions it owns | The number of partitions (`u32`), one committed offset per partition (`u64`, `u64::MAX` if none), then a CRC32C. |
 
 The lock files are empty. Only the `flock` held on them matters, and the operating system releases it when the process dies, which is what lets Mojay detect crashes without heartbeats.
 
@@ -83,9 +85,11 @@ Each file format carries its own version, so an incompatible change fails clearl
 
 | What | Where the version lives | Current version |
 | --- | --- | --- |
-| Data folder | `format_version` in `mojay.toml` | 1 |
+| Data folder | `format_version` in `mojay.toml` | 2 |
 | Topic | `format_version` in `meta.toml` | 2 |
 | Segment | `u16` in the 16-byte header of each `.log` | 1 |
+
+Data folder format 2 replaced the committed offsets file of each partition with one file per group and topic. A data folder in format 1 is refused with `Error::Corrupt`: there is no migration, so recreate the folder.
 
 Topic format 2 introduced several writers per partition and the `partitions.state` file. A topic created in format 1 (single writer) is refused with an error saying to recreate it: there is no migration. Any other unknown version is reported as `Error::Corrupt`, with the file path and the version found.
 
