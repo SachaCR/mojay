@@ -62,7 +62,7 @@ Measured on a Mac M5 with its internal SSD (see [Benchmarks](../benchmarks.md)):
 
 | Case | Throughput |
 | --- | --- |
-| `Always`, one message per send | about 300 messages/s per writer |
+| `Always`, one message per send, one writer | about 300 messages/s |
 | `Always`, batches of 100 | about 27,000 messages/s |
 | `Always`, 4 writers on one partition | about 580 messages/s |
 | `Interval` or `Never`, one message per send | about 250,000 to 450,000 messages/s |

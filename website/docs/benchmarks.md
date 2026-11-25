@@ -59,6 +59,8 @@ The whole run took 40 s and **9.8 MB of memory at most** (maximum resident set s
 | producer → consumer latency, always, 1,000 msg/s | 2,000 | 286 | 0.0 | delivery | 4.7 ms | 10.5 ms |
 | producer → consumer latency, never, 1,000 msg/s | 2,000 | 1,000 | 0.0 | delivery | 721 µs | 2.6 ms |
 
+**messages** is how many messages the scenario sent or read in its run, not a rate: **msg/s** is the rate. A produce scenario runs for 2 seconds, so the 553 messages of one writer with `always` make 276 msg/s.
+
 The latency columns measure different things depending on the row:
 
 - **per send** and **per batch**: the time a `send` call takes;
@@ -91,7 +93,7 @@ The same machine, with the flush done under the partition's write lock (and the 
 - **Delivery latency** from producer to consumer is under 1 ms at the median and under 3 ms at p99 with `never`, for a consumer that does not commit. With `always`, it is dominated by the flush.
 
 :::tip[Need more throughput with `always`?]
-Each writer gets about 300 sends per second on this machine. To go beyond, send in batches, let several writers share flushes, or choose `fsync = interval` if losing the last interval on a power loss is acceptable. See [Durability](./concepts/durability.md).
+A single writer gets about 300 sends per second on this machine. To go beyond, send in batches, let several writers share flushes, or choose `fsync = interval` if losing the last interval on a power loss is acceptable. See [Durability](./concepts/durability.md).
 :::
 
 ## Realistic workload

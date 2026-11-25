@@ -32,7 +32,8 @@ machine.
 
 Apple M5 (10 cores), 16 GB, macOS 26.6.2, internal SSD (APFS). Release build,
 2 seconds per time-boxed scenario, with group commit. Whole run: 40 s, **9.8 MB
-of memory at most** (maximum resident set size).
+of memory at most** (maximum resident set size). `messages` counts what a
+scenario sent or read in its run; `msg/s` is the rate.
 
 | scenario | messages | msg/s | MiB/s | latency | p50 | p99 |
 | --- | ---: | ---: | ---: | --- | ---: | ---: |
@@ -106,7 +107,7 @@ the index flushed on every send):
    queue would be written as one batch, with a single flush, which multiplies
    `always` throughput for code that does not await each send.
 2. **Documentation**: say plainly that `always` means about 300 sends per
-   second per writer on macOS, and point to batches, several writers or
+   second for a single writer on macOS, and point to batches, several writers or
    `interval` for throughput.
 
 ## Realistic suite

@@ -77,7 +77,7 @@ The tests follow the same idea: the log is cut at every byte of its end and reop
 
 On my machine (an Apple M5 with its internal SSD):
 
-- With `fsync` on every send, about **300 messages per second** per writer: each flush takes 3 to 5 ms. Batches of 100 messages reach **27,000 messages per second**.
+- With `fsync` on every send, about **300 messages per second** for a single writer: each flush takes 3 to 5 ms. Batches of 100 messages reach **27,000 messages per second**.
 - Group commit took **4 writers on one partition from 168 to 580 messages per second**, and their p99 latency from **805 ms to 11.5 ms**.
 - With `interval` or `never`, **250,000 to 450,000 single sends per second**, and **5 to 6 million per second** in batches.
 - Reading runs at **5 to 15 million messages per second**.
