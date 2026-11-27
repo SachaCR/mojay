@@ -513,7 +513,7 @@ impl Drop for Consumer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Db, LogConfig, Message, Retention, TopicConfig};
+    use crate::{Db, FsyncPolicy, LogConfig, Message, Retention, TopicConfig};
 
     /// Small segments whose sealed ones expire after `AGE`.
     const AGE: Duration = Duration::from_millis(300);
@@ -521,11 +521,19 @@ mod tests {
 
     /// A topic whose first partition holds `COUNT` messages over several
     /// segments, all younger than `AGE`.
+    ///
+    /// Retention also runs on each new segment: if writing took longer than
+    /// `AGE`, the first segments would be deleted before any test reads
+    /// them. Without `fsync` (not what these tests check), writing takes a
+    /// few milliseconds even under load; it used to take about 500 ms with
+    /// `Always` while the other tests ran, and a consumer then waited forever
+    /// for the deleted messages.
     fn topic_with_segments(partitions: u32) -> (tempfile::TempDir, Db) {
         let dir = tempfile::TempDir::new().unwrap();
         let db = Db::open(dir.path()).unwrap();
         let log = LogConfig {
             segment_max_bytes: 256,
+            fsync: FsyncPolicy::Never,
             retention: Retention {
                 max_bytes: None,
                 max_age: Some(AGE),
@@ -540,6 +548,11 @@ mod tests {
                 .send_to(0, &Message::new("k", format!("value-{i}")))
                 .unwrap();
         }
+        assert_eq!(
+            db.reader("t").unwrap().start_offset(0).unwrap(),
+            0,
+            "writing took longer than AGE: retention already deleted messages"
+        );
         (dir, db)
     }
 
@@ -613,8 +626,10 @@ mod tests {
     fn idle_consumer_releases_segments_deleted_by_retention() {
         let (_dir, db) = topic_with_segments(1);
         let mut consumer = db.consumer("g", &["t"], ConsumerConfig::default()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
         let mut read = 0;
         while read < COUNT {
+            assert!(Instant::now() < deadline, "only {read} of {COUNT} read");
             read += consumer.poll(Duration::from_secs(1)).unwrap().len() as u64;
         }
         let reader = &consumer.topics[0].reader;
