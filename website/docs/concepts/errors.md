@@ -24,6 +24,7 @@ stable `code`.
 | `OffsetOutOfRange { offset, start, end }` | `MOJAY_OFFSET_OUT_OF_RANGE` | `TopicReader::read` at an offset before the start of the partition (deleted by retention) or beyond its read limit. | Read from `start`, or wait for new messages if you are at `end`. Consumers handle this case themselves. |
 | `Corrupt { path, reason }` | `MOJAY_CORRUPT` | Data on disk that Mojay cannot use and must not repair on its own. See below. | Inspect the file named in `path`. Do not delete files by hand before you understand the cause. |
 | `Io(io::Error)` | `MOJAY_IO` | An error from the file system: full disk, permissions, too many open files… | Check the underlying error. With the `Interval` policy, a background `fsync` failure is returned by the producer's next call. |
+| `WorkerStopped` | — | Rust async API only (`tokio` feature): the helper thread of an `AsyncProducer` or `AsyncConsumer` stopped after a panic, a bug in Mojay. | Drop it and open a new one, and please report the bug. |
 
 ### `Corrupt` in more detail
 

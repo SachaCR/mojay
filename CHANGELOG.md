@@ -11,6 +11,19 @@ turns that section into the section of the new version.
 
 ## [Unreleased]
 
+### Library (`mojay` crate)
+
+- **Async API, behind the new `tokio` feature**: `AsyncProducer` and
+  `AsyncConsumer`, the async versions of `Producer` and `Consumer`. Each runs
+  its sync counterpart on a dedicated thread, in call order: file I/O, locks,
+  `fsync` and the wait of `poll` never block the async runtime. Only tokio's
+  channels are used, so any runtime works. `AsyncConsumer::poll` is cancel
+  safe: messages read by a cancelled `poll` are returned by the next one, and
+  no commit skips them.
+- **New error variant `Error::WorkerStopped`**, for a stopped helper thread of
+  the async API. It exists with or without the feature; an exhaustive `match`
+  on `mojay::Error` needs a new arm.
+
 ## [0.1.2] - 2026-11-24
 
 ### Library (`mojay` crate)

@@ -73,6 +73,13 @@ pub enum Error {
         /// The number of partitions of the topic: valid ones are `0..partitions`.
         partitions: u32,
     },
+
+    /// The helper thread of an `AsyncProducer` or `AsyncConsumer` (`tokio`
+    /// feature) stopped without answering: it panicked. The async producer
+    /// or consumer can no longer be used. The variant exists without the
+    /// feature too, so that enabling it never breaks a `match` elsewhere.
+    #[error("the helper thread of the async producer or consumer stopped")]
+    WorkerStopped,
 }
 
 /// The result type of Mojay operations.

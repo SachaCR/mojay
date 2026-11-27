@@ -24,6 +24,7 @@ Les couches ne dépendent que des couches en dessous d'elles, jamais l'inverse.
 | Groupes | `group` | Consumers, membres, répartition des partitions, offsets commités | Ne touche pas aux segments |
 | API | `db` | Le point d'entrée public | Aucune logique métier propre |
 | CLI | crate `cli/` | Arguments, affichage, une commande par fichier | Ne lit jamais les fichiers de données : passe par la bibliothèque |
+| API async | `async_api` (feature `tokio`) | `AsyncProducer` et `AsyncConsumer` : un thread dédié par producteur ou consumer, les appels dans l'ordre | Aucune logique métier : passe par l'API synchrone |
 | Binding Node.js | crate `bindings/node/` (napi-rs) | Conversions Rust ↔ JavaScript, un thread par producteur et consumer | Aucune logique métier : tout passe par l'API publique |
 
 Modules de support, chacun avec une seule responsabilité :
@@ -114,9 +115,12 @@ hors du workspace Cargo (voir `website/README.md`).
 
 ```bash
 cargo fmt --all
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features
 ```
+
+`--all-features` active la feature `tokio` (API async). Sans elle aussi, la
+bibliothèque doit compiler sans avertissement : `cargo clippy -p mojay --all-targets -- -D warnings`.
 
 Si le binding Node.js est touché, ses tests aussi, depuis `bindings/node` :
 
