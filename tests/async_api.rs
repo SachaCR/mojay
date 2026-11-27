@@ -9,11 +9,9 @@
 mod common;
 
 use std::future::Future;
-use std::pin::pin;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Waker};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use common::{config, message, new_db};
 use mojay::{AsyncConsumer, AsyncProducer, ConsumerConfig, Db, Error, FsyncPolicy};
@@ -33,6 +31,10 @@ fn block_on<F: Future>(future: F) -> F::Output {
 fn topic_with_messages(db: &Db, count: u64) {
     db.create_topic("t", config(2, 1 << 20, FsyncPolicy::Never))
         .unwrap();
+    produce(db, count);
+}
+
+fn produce(db: &Db, count: u64) {
     let mut producer = db.producer("t").unwrap();
     for i in 0..count {
         producer.send(&message(i)).unwrap();
@@ -93,59 +95,79 @@ fn produce_then_consume() {
 
 #[test]
 fn waiting_poll_does_not_block_the_runtime() {
+    const WAIT: Duration = Duration::from_secs(1);
     let (_dir, db) = new_db();
     topic_with_messages(&db, 0);
     block_on(async {
         let mut consumer = AsyncConsumer::open(&db, "g", &["t"], ConsumerConfig::default())
             .await
             .unwrap();
-        let ticks = Arc::new(AtomicU32::new(0));
-        let ticker = tokio::spawn({
-            let ticks = Arc::clone(&ticks);
+        // The runtime has a single thread: this task can only run while
+        // `poll` waits if `poll` hands the thread back to the runtime.
+        let start = Instant::now();
+        let ran_after = Arc::new(Mutex::new(None));
+        tokio::spawn({
+            let ran_after = Arc::clone(&ran_after);
             async move {
-                loop {
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                    ticks.fetch_add(1, Ordering::Relaxed);
-                }
+                *ran_after.lock().unwrap() = Some(start.elapsed());
             }
         });
         // Nothing to read: `poll` waits for its whole timeout.
+        assert!(consumer.poll(WAIT).await.unwrap().is_empty());
+
+        // Checked before this task yields again. A `poll` that held the
+        // thread would leave `None`, or (if it held it then awaited) let the
+        // task run only at the end. No timer is counted: CI machines have
+        // slow, irregular timers.
+        let ran_after = ran_after
+            .lock()
+            .unwrap()
+            .expect("the other task never ran while poll waited");
         assert!(
-            consumer
-                .poll(Duration::from_millis(300))
-                .await
-                .unwrap()
-                .is_empty()
+            ran_after < WAIT / 2,
+            "the other task ran only after {ran_after:?}"
         );
-        ticker.abort();
-        // About 30 if the runtime stayed free, 0 if `poll` had blocked it.
-        assert!(ticks.load(Ordering::Relaxed) >= 10);
     });
 }
 
-/// Starts a `poll` (its job is queued on the helper thread), lets the helper
-/// thread work for `wait`, then cancels the `poll` by dropping it.
-fn cancel_poll(consumer: &mut AsyncConsumer, wait: Duration) {
-    let mut poll = pin!(consumer.poll(POLL));
+/// Starts a long `poll` on an empty topic, so it is certainly still waiting
+/// when first polled (its job is queued on the helper thread), writes
+/// `COUNT` messages, and cancels the `poll` by dropping it:
+/// - `wait` zero: dropped before the messages are written, so before the
+///   helper thread can send them;
+/// - otherwise: dropped `wait` after they are written, once the helper
+///   thread has sent them (it needs far less).
+fn cancel_poll_while_messages_arrive(consumer: &mut AsyncConsumer, db: &Db, wait: Duration) {
+    let mut poll = Box::pin(consumer.poll(Duration::from_secs(10)));
     let mut context = Context::from_waker(Waker::noop());
-    assert!(poll.as_mut().poll(&mut context).is_pending());
-    std::thread::sleep(wait);
+    assert!(
+        poll.as_mut().poll(&mut context).is_pending(),
+        "the topic is empty: poll must wait"
+    );
+    if wait.is_zero() {
+        drop(poll);
+        produce(db, COUNT);
+    } else {
+        produce(db, COUNT);
+        std::thread::sleep(wait);
+        drop(poll);
+    }
 }
 
-/// Before the helper thread reads (no wait), and after it sent the records
-/// (it needs far less than 200 ms): both ways of cancelling are covered.
+/// Both moments a `poll` can be cancelled: before the helper thread sends
+/// the records, and after.
 const CANCEL_MOMENTS: [Duration; 2] = [Duration::ZERO, Duration::from_millis(200)];
 
 #[test]
 fn cancelled_poll_loses_nothing() {
     for wait in CANCEL_MOMENTS {
         let (_dir, db) = new_db();
-        topic_with_messages(&db, COUNT);
+        topic_with_messages(&db, 0);
         block_on(async {
             let mut consumer = AsyncConsumer::open(&db, "g", &["t"], ConsumerConfig::default())
                 .await
                 .unwrap();
-            cancel_poll(&mut consumer, wait);
+            cancel_poll_while_messages_arrive(&mut consumer, &db, wait);
             let read = read(&mut consumer, COUNT as usize).await;
             assert_eq!(read.len(), COUNT as usize, "cancelled after {wait:?}");
 
@@ -164,12 +186,12 @@ fn cancelled_poll_loses_nothing() {
 fn auto_commit_on_close_skips_no_cancelled_message() {
     for wait in CANCEL_MOMENTS {
         let (_dir, db) = new_db();
-        topic_with_messages(&db, COUNT);
+        topic_with_messages(&db, 0);
         block_on(async {
             let mut consumer = AsyncConsumer::open(&db, "g", &["t"], auto_commit())
                 .await
                 .unwrap();
-            cancel_poll(&mut consumer, wait);
+            cancel_poll_while_messages_arrive(&mut consumer, &db, wait);
             // Commits automatically, then releases the partitions.
             consumer.close().await.unwrap();
 
