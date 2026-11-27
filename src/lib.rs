@@ -25,7 +25,7 @@
 #[cfg(not(unix))]
 compile_error!("Mojay only targets macOS and Linux in V1.");
 
-#[cfg(feature = "tokio")]
+#[cfg(feature = "async")]
 mod async_api;
 mod db;
 mod durable;
@@ -42,7 +42,7 @@ mod record;
 mod segment;
 mod topic;
 
-#[cfg(feature = "tokio")]
+#[cfg(feature = "async")]
 pub use async_api::{AsyncConsumer, AsyncProducer};
 pub use db::Db;
 pub use error::{Error, Result};

@@ -26,8 +26,9 @@ include = ["/src", "/tests", "/README.md", "/LICENSE-MIT", "/LICENSE-APACHE", "/
 
 [features]
 # `AsyncProducer` and `AsyncConsumer`, for async applications. Only tokio's
-# channels are used: the library starts no runtime and works with any.
-tokio = ["dep:tokio"]
+# channels are used: the library starts no runtime and works with any
+# (tokio, smol, async-std...), hence a name that is not "tokio".
+async = ["dep:tokio"]
 
 [dependencies]
 crc32c = "0.6.9"

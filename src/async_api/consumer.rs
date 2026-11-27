@@ -8,7 +8,7 @@ use crate::error::Result;
 use crate::{Consumer, ConsumerConfig, ConsumerRecord, Db, RebalanceEvent};
 
 /// A member of a consumer group, for async code: the async version of
-/// [`Consumer`], with the same behavior. Available with the `tokio` feature.
+/// [`Consumer`], with the same behavior. Available with the `async` feature.
 ///
 /// The consumer lives on its own helper thread, which runs the calls in
 /// order: a waiting [`poll`](Self::poll) never blocks the async runtime. Only

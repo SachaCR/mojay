@@ -7,7 +7,7 @@ use crate::error::Result;
 use crate::{Db, Message, Producer};
 
 /// A topic's writer, for async code: the async version of [`Producer`], with
-/// the same behavior. Available with the `tokio` feature.
+/// the same behavior. Available with the `async` feature.
 ///
 /// The producer lives on its own helper thread, which runs the calls in
 /// order: locks and `fsync`s never block the async runtime. Only tokio's

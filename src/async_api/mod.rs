@@ -1,4 +1,4 @@
-//! The async API, with the `tokio` feature: [`AsyncProducer`] and
+//! The async API, with the `async` feature: [`AsyncProducer`] and
 //! [`AsyncConsumer`].
 //!
 //! Each one owns a sync [`Producer`](crate::Producer) or

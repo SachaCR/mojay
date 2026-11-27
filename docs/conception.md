@@ -195,7 +195,7 @@ flowchart LR
 
 ## API publique Rust (esquisse)
 
-L'API est synchrone, avec trois points d'entrée : `Db`, `Producer` et `Consumer`. La feature Cargo `tokio` ajoute leur variante async, `AsyncProducer` et `AsyncConsumer` (voir plus bas).
+L'API est synchrone, avec trois points d'entrée : `Db`, `Producer` et `Consumer`. La feature Cargo `async` ajoute leur variante async, `AsyncProducer` et `AsyncConsumer` (voir plus bas).
 
 ```rust
 use mojay::{ConsumerConfig, Db, Message, StartFrom, TopicConfig};
@@ -225,7 +225,7 @@ loop {
 - **Inspection** : `mojay::inspect::dump_segment` lit un segment brut, sans rien réparer, et rapporte une éventuelle fin illisible au lieu d'échouer.
 - **Rebalance** : `consumer.take_rebalance_events()` rend les partitions reçues et cédées ; `consumer.assignment()` donne les partitions possédées.
 - **Erreurs** : `TopicExists`, `UnknownTopic`, `UnknownPartition`, `OffsetOutOfRange`, `RecordTooLarge`, `InvalidRecord`, `InvalidConfig`, `InvalidName`, `Corrupt`, `Io`, `WorkerStopped`.
-- **API async** (feature `tokio`) : `AsyncProducer::open(&db, topic)` et `AsyncConsumer::open(&db, group, topics, config)`, puis les mêmes méthodes que la version synchrone, en `async`. Chacun possède un `Producer` ou un `Consumer` synchrone sur un thread dédié, qui exécute les appels dans l'ordre : aucune I/O, aucun verrou, aucun `fsync` ni l'attente de `poll` ne bloque un thread du runtime. Seuls les canaux de tokio (feature `sync`) sont utilisés : la bibliothèque ne démarre aucun runtime, et marche avec n'importe lequel. `close().await` attend la libération des verrous ; un simple `drop` ferme en arrière-plan, sur le thread dédié. `Error::WorkerStopped` signale un thread dédié arrêté par un panic ; la variante existe même sans la feature, pour qu'activer celle-ci ne casse jamais un `match` ailleurs (les features Cargo doivent rester additives).
+- **API async** (feature `async`) : `AsyncProducer::open(&db, topic)` et `AsyncConsumer::open(&db, group, topics, config)`, puis les mêmes méthodes que la version synchrone, en `async`. Chacun possède un `Producer` ou un `Consumer` synchrone sur un thread dédié, qui exécute les appels dans l'ordre : aucune I/O, aucun verrou, aucun `fsync` ni l'attente de `poll` ne bloque un thread du runtime. Seuls les canaux de tokio (feature `sync`) sont utilisés : la bibliothèque ne démarre aucun runtime, et marche avec n'importe lequel. `close().await` attend la libération des verrous ; un simple `drop` ferme en arrière-plan, sur le thread dédié. `Error::WorkerStopped` signale un thread dédié arrêté par un panic ; la variante existe même sans la feature, pour qu'activer celle-ci ne casse jamais un `match` ailleurs (les features Cargo doivent rester additives).
 
 ```rust
 let mut producer = AsyncProducer::open(&db, "orders").await?;
@@ -330,4 +330,4 @@ Après la V1 : index temporel (positionnement par timestamp), compression, compa
 | Notification des rebalances | `take_rebalance_events()` plutôt que des callbacks |
 | Premier binding | Node.js avec napi-rs, avant l'ABI C et Python |
 | Appels asynchrones en Node | Un thread et une file par producteur ou consumer : ordre des appels garanti, pool de threads de Node jamais occupé |
-| API async en Rust | Feature `tokio`, un thread et une file par producteur ou consumer, comme le binding Node, plutôt que `spawn_blocking` et une boucle de `poll` réécrite : code synchrone réutilisé tel quel, ordre des appels garanti, runtime jamais bloqué. Seule la feature `sync` de tokio : n'importe quel runtime convient |
+| API async en Rust | Feature `async` (pas `tokio` : elle marche avec n'importe quel runtime), un thread et une file par producteur ou consumer, comme le binding Node, plutôt que `spawn_blocking` et une boucle de `poll` réécrite : code synchrone réutilisé tel quel, ordre des appels garanti, runtime jamais bloqué. Seule la feature `sync` de tokio : n'importe quel runtime convient |

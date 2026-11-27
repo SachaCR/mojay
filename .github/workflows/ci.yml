@@ -61,7 +61,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.88
       - uses: Swatinem/rust-cache@v2
       - run: cargo check -p mojay -p mojay-cli
-      - run: cargo check -p mojay --features tokio
+      - run: cargo check -p mojay --features async
 
   node:
     name: Node.js binding (${{ matrix.os }})

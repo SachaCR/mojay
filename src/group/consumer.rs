@@ -475,7 +475,7 @@ impl Consumer {
     /// them. They are read again, and no commit can skip them. Records of a
     /// partition no longer owned are ignored: its new owner resumes from the
     /// last commit.
-    #[cfg(any(feature = "tokio", test))]
+    #[cfg(any(feature = "async", test))]
     pub(crate) fn rewind(&mut self, records: &[ConsumerRecord]) {
         for record in records {
             let owned = self.owned.iter_mut().find(|o| {

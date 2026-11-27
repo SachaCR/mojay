@@ -1,9 +1,9 @@
-//! Async API tests (`tokio` feature): `AsyncProducer` and `AsyncConsumer`.
+//! Async API tests (`async` feature): `AsyncProducer` and `AsyncConsumer`.
 //!
 //! Each test runs on a single-thread tokio runtime: a call that blocked the
 //! runtime would stop every other task, which the tests would see.
 
-#![cfg(feature = "tokio")]
+#![cfg(feature = "async")]
 
 #[allow(dead_code)]
 mod common;
