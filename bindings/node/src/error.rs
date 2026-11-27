@@ -38,6 +38,9 @@ impl BindingError {
                 E::UnknownTopic(_) => "MOJAY_UNKNOWN_TOPIC",
                 E::InvalidName { .. } => "MOJAY_INVALID_NAME",
                 E::UnknownPartition { .. } => "MOJAY_UNKNOWN_PARTITION",
+                // Only from the Rust async API, which the binding does not use:
+                // it has its own threads (see `worker`).
+                E::WorkerStopped => "MOJAY_WORKER_STOPPED",
             },
         }
     }

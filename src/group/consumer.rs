@@ -469,6 +469,24 @@ impl Consumer {
         Ok(out)
     }
 
+    /// Takes back records that `poll` returned but that never reached the
+    /// caller (an async `poll` cancelled while it ran): each owned partition
+    /// resumes at the first of these records, as if `poll` had not returned
+    /// them. They are read again, and no commit can skip them. Records of a
+    /// partition no longer owned are ignored: its new owner resumes from the
+    /// last commit.
+    #[cfg(any(feature = "tokio", test))]
+    pub(crate) fn rewind(&mut self, records: &[ConsumerRecord]) {
+        for record in records {
+            let owned = self.owned.iter_mut().find(|o| {
+                o.partition == record.partition && self.topics[o.topic].name == record.topic
+            });
+            if let Some(owned) = owned {
+                owned.position = owned.position.min(record.offset);
+            }
+        }
+    }
+
     fn read_owned(&mut self, i: usize, budget: usize) -> Result<Vec<Record>> {
         let owned = &self.owned[i];
         let reader = &mut self.topics[owned.topic].reader;
@@ -532,6 +550,63 @@ mod tests {
         let mut producer = db.producer("t").unwrap();
         producer.enforce_retention().unwrap();
         assert!(db.reader("t").unwrap().start_offset(0).unwrap() > 0);
+    }
+
+    #[test]
+    fn rewind_returns_to_the_first_undelivered_record_of_each_partition() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db = Db::open(dir.path()).unwrap();
+        let topic = TopicConfig {
+            partitions: 2,
+            ..TopicConfig::default()
+        };
+        db.create_topic("t", topic).unwrap();
+        let mut producer = db.producer("t").unwrap();
+        for i in 0..COUNT {
+            producer
+                .send_to(0, &Message::new("k", format!("value-{i}")))
+                .unwrap();
+        }
+        producer.send_to(1, &Message::new("k", "on-1")).unwrap();
+        let config = ConsumerConfig {
+            max_poll_bytes: usize::MAX,
+            ..ConsumerConfig::default()
+        };
+        let mut consumer = db.consumer("g", &["t"], config).unwrap();
+        let mut first = Vec::new();
+        while first.len() < COUNT as usize + 1 {
+            first.extend(consumer.poll(Duration::from_secs(1)).unwrap());
+        }
+        assert_eq!(consumer.position("t", 0), Some(COUNT));
+        assert_eq!(consumer.position("t", 1), Some(1));
+
+        // Only the second half of partition 0 and the partition 1 record were
+        // not delivered; a record of an unknown topic is ignored.
+        let mut undelivered: Vec<ConsumerRecord> = first
+            .iter()
+            .filter(|r| r.partition == 1 || r.offset >= COUNT / 2)
+            .cloned()
+            .collect();
+        let mut foreign = undelivered[0].clone();
+        foreign.topic = "other".into();
+        undelivered.push(foreign);
+        consumer.rewind(&undelivered);
+        assert_eq!(consumer.position("t", 0), Some(COUNT / 2));
+        assert_eq!(consumer.position("t", 1), Some(0));
+
+        let mut again = Vec::new();
+        while again.len() < undelivered.len() - 1 {
+            again.extend(consumer.poll(Duration::from_secs(1)).unwrap());
+        }
+        let key = |r: &ConsumerRecord| (r.partition, r.offset);
+        let mut expected: Vec<_> = undelivered[..undelivered.len() - 1]
+            .iter()
+            .map(key)
+            .collect();
+        let mut got: Vec<_> = again.iter().map(key).collect();
+        expected.sort_unstable();
+        got.sort_unstable();
+        assert_eq!(got, expected);
     }
 
     #[test]

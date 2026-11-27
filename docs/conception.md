@@ -195,7 +195,7 @@ flowchart LR
 
 ## API publique Rust (esquisse)
 
-L'API est synchrone en V1, avec trois points d'entrée : `Db`, `Producer` et `Consumer`. Une variante async pourra venir derrière une feature Cargo.
+L'API est synchrone, avec trois points d'entrée : `Db`, `Producer` et `Consumer`. La feature Cargo `tokio` ajoute leur variante async, `AsyncProducer` et `AsyncConsumer` (voir plus bas).
 
 ```rust
 use mojay::{ConsumerConfig, Db, Message, StartFrom, TopicConfig};
@@ -224,7 +224,17 @@ loop {
 - **Administration** : `list_topics`, `describe_topic` (configuration, et pour chaque partition son premier offset, sa limite de lecture et ses segments), `committed_offsets` (offsets commités par chaque groupe). `delete_topic` reste à faire.
 - **Inspection** : `mojay::inspect::dump_segment` lit un segment brut, sans rien réparer, et rapporte une éventuelle fin illisible au lieu d'échouer.
 - **Rebalance** : `consumer.take_rebalance_events()` rend les partitions reçues et cédées ; `consumer.assignment()` donne les partitions possédées.
-- **Erreurs** : `TopicExists`, `UnknownTopic`, `UnknownPartition`, `OffsetOutOfRange`, `RecordTooLarge`, `InvalidRecord`, `InvalidConfig`, `InvalidName`, `Corrupt`, `Io`.
+- **Erreurs** : `TopicExists`, `UnknownTopic`, `UnknownPartition`, `OffsetOutOfRange`, `RecordTooLarge`, `InvalidRecord`, `InvalidConfig`, `InvalidName`, `Corrupt`, `Io`, `WorkerStopped`.
+- **API async** (feature `tokio`) : `AsyncProducer::open(&db, topic)` et `AsyncConsumer::open(&db, group, topics, config)`, puis les mêmes méthodes que la version synchrone, en `async`. Chacun possède un `Producer` ou un `Consumer` synchrone sur un thread dédié, qui exécute les appels dans l'ordre : aucune I/O, aucun verrou, aucun `fsync` ni l'attente de `poll` ne bloque un thread du runtime. Seuls les canaux de tokio (feature `sync`) sont utilisés : la bibliothèque ne démarre aucun runtime, et marche avec n'importe lequel. `close().await` attend la libération des verrous ; un simple `drop` ferme en arrière-plan, sur le thread dédié. `Error::WorkerStopped` signale un thread dédié arrêté par un panic ; la variante existe même sans la feature, pour qu'activer celle-ci ne casse jamais un `match` ailleurs (les features Cargo doivent rester additives).
+
+```rust
+let mut producer = AsyncProducer::open(&db, "orders").await?;
+producer.send(Message::new("cmd-42", "{...}")).await?;
+
+let mut consumer = AsyncConsumer::open(&db, "billing", &["orders"], ConsumerConfig::default()).await?;
+let records = consumer.poll(Duration::from_millis(500)).await?;
+consumer.commit().await?;
+```
 
 ## Garanties et limites
 
@@ -236,6 +246,7 @@ Mojay garantit l'ordre par partition et une livraison at-least-once, sur une seu
 - Livraison at-least-once pour tous les consumers, seuls ou en groupe : un crash entre traitement et commit rejoue les messages concernés.
 - Aucun message n'est visible avant d'être entièrement écrit, grâce à la limite de lecture.
 - Durabilité selon la politique `fsync` choisie.
+- `AsyncConsumer::poll` est annulable sans perte : si son future est abandonné (`tokio::time::timeout`, `select!`), les messages déjà lus pour lui sont repris (`Consumer::rewind`), avant tout commit. Le prochain `poll` les rend. Deux cas : l'appelant est parti avant l'envoi des messages (le thread dédié les reprend aussitôt), ou après (leur `Drop` met une reprise en file, avant tout autre appel possible).
 
 **Limites assumées**
 
@@ -319,3 +330,4 @@ Après la V1 : index temporel (positionnement par timestamp), compression, compa
 | Notification des rebalances | `take_rebalance_events()` plutôt que des callbacks |
 | Premier binding | Node.js avec napi-rs, avant l'ABI C et Python |
 | Appels asynchrones en Node | Un thread et une file par producteur ou consumer : ordre des appels garanti, pool de threads de Node jamais occupé |
+| API async en Rust | Feature `tokio`, un thread et une file par producteur ou consumer, comme le binding Node, plutôt que `spawn_blocking` et une boucle de `poll` réécrite : code synchrone réutilisé tel quel, ordre des appels garanti, runtime jamais bloqué. Seule la feature `sync` de tokio : n'importe quel runtime convient |

@@ -38,6 +38,14 @@ db.createTopic("orders", { partitions: 3 });
 await db.producer("orders").send({ key: "customer-42", value: '{"total": 99}' });
 ```
 
+For async code, the `tokio` feature adds `AsyncProducer` and `AsyncConsumer`:
+the same API with `.await`, without ever blocking the runtime.
+
+```rust
+let mut consumer = AsyncConsumer::open(&db, "billing", &["orders"], ConsumerConfig::default()).await?;
+let records = consumer.poll(Duration::from_millis(500)).await?;
+```
+
 ## What's in this repository
 
 | Folder | Content |

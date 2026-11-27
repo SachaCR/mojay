@@ -46,9 +46,11 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Clippy without the optional features
+        run: cargo clippy -p mojay --all-targets -- -D warnings
       - name: Tests
-        run: cargo test --workspace
+        run: cargo test --workspace --all-features
 
   msrv:
     name: Minimum Rust version
@@ -59,6 +61,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.88
       - uses: Swatinem/rust-cache@v2
       - run: cargo check -p mojay -p mojay-cli
+      - run: cargo check -p mojay --features tokio
 
   node:
     name: Node.js binding (${{ matrix.os }})

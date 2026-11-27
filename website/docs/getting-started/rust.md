@@ -203,6 +203,54 @@ mojay describe orders   # partitions, read limits, and the lag of the billing gr
 mojay tail orders       # the messages, without committing anything
 ```
 
+## Async code
+
+For an async application (a tokio server, for example), enable the `tokio`
+feature:
+
+```bash
+cargo add mojay --features tokio
+```
+
+`AsyncProducer` and `AsyncConsumer` have the same methods as `Producer` and
+`Consumer`, with `.await`. Each one runs on a dedicated thread, in call order:
+file I/O, locks, `fsync` and the wait of `poll` never block the async runtime.
+Messages are passed by value, because they move to that thread.
+
+```rust
+use std::time::Duration;
+
+use mojay::{AsyncConsumer, AsyncProducer, ConsumerConfig, Db, Message};
+
+async fn run(db: &Db) -> mojay::Result<()> {
+    let mut producer = AsyncProducer::open(db, "orders").await?;
+    producer.send(Message::new("client-42", r#"{"total": 129.9}"#)).await?;
+    producer.close().await?;
+
+    let mut consumer =
+        AsyncConsumer::open(db, "billing", &["orders"], ConsumerConfig::default()).await?;
+    for record in consumer.poll(Duration::from_millis(500)).await? {
+        println!("{}/{} @ {}", record.topic, record.partition, record.offset);
+    }
+    consumer.commit().await?;
+    consumer.close().await
+}
+```
+
+A few things to know:
+
+- **`close().await`** waits until the producer or consumer is closed and its
+  locks are released. Dropping it also closes it, in the background.
+- **`poll` is cancel safe**: if its future is dropped, with
+  `tokio::time::timeout` or `tokio::select!` for example, the messages it read
+  are not lost. The next `poll` returns them, and no commit skips them.
+- **`send` is not cancel safe**: a cancelled `send` may still write its message.
+- `Db::open`, `create_topic` and the other `Db` methods stay synchronous. They
+  are short, but they touch the disk: call them at start-up, or inside
+  `tokio::task::spawn_blocking`.
+- Only tokio's channels are used: the library starts no runtime, and works
+  with any async runtime.
+
 ## Next steps
 
 - [Topics and partitions](../concepts/topics-and-partitions.md)
