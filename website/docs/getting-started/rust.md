@@ -205,11 +205,11 @@ mojay tail orders       # the messages, without committing anything
 
 ## Async code
 
-For an async application (a tokio server, for example), enable the `tokio`
-feature:
+For an async application, enable the `async` feature. It works with any async
+runtime (tokio, smol, async-std...):
 
 ```bash
-cargo add mojay --features tokio
+cargo add mojay --features async
 ```
 
 `AsyncProducer` and `AsyncConsumer` have the same methods as `Producer` and

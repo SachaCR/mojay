@@ -13,7 +13,7 @@ turns that section into the section of the new version.
 
 ### Library (`mojay` crate)
 
-- **Async API, behind the new `tokio` feature**: `AsyncProducer` and
+- **Async API, behind the new `async` feature**: `AsyncProducer` and
   `AsyncConsumer`, the async versions of `Producer` and `Consumer`. Each runs
   its sync counterpart on a dedicated thread, in call order: file I/O, locks,
   `fsync` and the wait of `poll` never block the async runtime. Only tokio's

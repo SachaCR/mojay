@@ -74,7 +74,7 @@ pub enum Error {
         partitions: u32,
     },
 
-    /// The helper thread of an `AsyncProducer` or `AsyncConsumer` (`tokio`
+    /// The helper thread of an `AsyncProducer` or `AsyncConsumer` (`async`
     /// feature) stopped without answering: it panicked. The async producer
     /// or consumer can no longer be used. The variant exists without the
     /// feature too, so that enabling it never breaks a `match` elsewhere.

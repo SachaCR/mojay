@@ -38,8 +38,9 @@ db.createTopic("orders", { partitions: 3 });
 await db.producer("orders").send({ key: "customer-42", value: '{"total": 99}' });
 ```
 
-For async code, the `tokio` feature adds `AsyncProducer` and `AsyncConsumer`:
-the same API with `.await`, without ever blocking the runtime.
+For async code, the `async` feature adds `AsyncProducer` and `AsyncConsumer`:
+the same API with `.await`, without ever blocking the runtime. It works with
+any async runtime (tokio, smol, async-std...).
 
 ```rust
 let mut consumer = AsyncConsumer::open(&db, "billing", &["orders"], ConsumerConfig::default()).await?;
