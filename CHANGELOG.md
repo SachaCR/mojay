@@ -11,6 +11,8 @@ turns that section into the section of the new version.
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-11-27
+
 ### Library (`mojay` crate)
 
 - **Async API, behind the new `async` feature**: `AsyncProducer` and
@@ -86,6 +88,7 @@ plain name `mojay`, hence the scope.
 - Prebuilt binaries for macOS (arm64, x64) and Linux with glibc 2.35 or later
   (x64, arm64).
 
+[0.1.3]: https://github.com/SachaCR/mojay/releases/tag/v0.1.3
 [0.1.2]: https://github.com/SachaCR/mojay/releases/tag/v0.1.2
 [0.1.1]: https://github.com/SachaCR/mojay/releases/tag/v0.1.1
 [0.1.0]: https://github.com/SachaCR/mojay/releases/tag/v0.1.0

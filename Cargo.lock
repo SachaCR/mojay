@@ -353,7 +353,7 @@ dependencies = [
 
 [[package]]
 name = "mojay"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "crc32c",
  "memmap2",
@@ -374,7 +374,7 @@ dependencies = [
 
 [[package]]
 name = "mojay-cli"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "clap",
  "mojay",
@@ -404,7 +404,7 @@ dependencies = [
 
 [[package]]
 name = "mojay-node"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "mojay",
  "napi",
